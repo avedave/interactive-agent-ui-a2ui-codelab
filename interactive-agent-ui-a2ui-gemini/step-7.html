@@ -1,0 +1,128 @@
+
+
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+  <title>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Code+Pro:400|Roboto:400,300,400italic,500,700|Roboto+Mono">
+  <link rel="stylesheet" href=".styles/codelab.css">
+  <style>
+    html {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+    }
+  </style>
+</head>
+
+<body class="codelab-takeover">
+  <div class="codelab__toc">
+    <a href="index.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">1</span>
+      <span class="toc-item__title">Introduction</span>
+    </a>
+    <a href="step-2.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">2</span>
+      <span class="toc-item__title">Environment &amp; Vertex AI Setup</span>
+    </a>
+    <a href="step-3.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">3</span>
+      <span class="toc-item__title">Building the Baseline Smart Home Agent</span>
+    </a>
+    <a href="step-4.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">4</span>
+      <span class="toc-item__title">Deploying the Baseline to Cloud Run</span>
+    </a>
+    <a href="step-5.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">5</span>
+      <span class="toc-item__title">Integrating the A2UI Client Renderer</span>
+    </a>
+    <a href="step-6.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">6</span>
+      <span class="toc-item__title">Teaching Gemini A2UI (Prompt-First Catalog)</span>
+    </a>
+    <a href="step-7.html" class="toc-item toc-item--current">
+      <span class="toc-item__index">7</span>
+      <span class="toc-item__title">Adding Two-Way Interactivity &amp; Redeploying</span>
+    </a>
+    <a href="step-8.html" class="toc-item">
+      <span class="toc-item__index">8</span>
+      <span class="toc-item__title">Congratulations &amp; Clean Up</span>
+    </a>
+  </div>
+
+  <div class="codelab__step">
+
+    <div class="step__header">
+      <a href="step-6.html">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0 0h24v24H0z" fill="none"/>
+          <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+        </svg>
+      </a>
+
+      <a href=".index.html" title="Return to home page">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+          <path d="M0 0h24v24H0z" fill="none"/>
+        </svg>
+      </a>
+
+      <a href="step-8.html">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0 0h24v24H0z" fill="none"/>
+          <path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/>
+        </svg>
+      </a>
+
+      <h1>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</h1>
+    </div>
+
+    <div class="step__body">
+      <h1>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</h1>
+      <h2>7. Adding Two-Way Interactivity &amp; Redeploying</h2>
+      <div><p>In this step, you will test two-way interaction locally and redeploy the upgraded application to Cloud Run.</p><h2>Test Locally</h2><p>From <code>~/a2ui-codelab/02-a2ui</code>, launch the server:</p><pre><code language="language-bash" class="language-bash">uvicorn main:app --host 0.0.0.0 --port 8080
+</code></pre><p>Open the <strong>Web Preview</strong> on port 8080 in Cloud Shell.</p><ul type="1"><li><strong>Test Text Advice</strong>: <ul><li>Ask: <em>&#34;What is a healthy indoor humidity?&#34;</em></li><li>Verify: Gemini responds purely in text. No UI surface is rendered.</li></ul></li><li><strong>Test A2UI Surface Rendering</strong>: <ul><li>Click the prompt chip: <strong>&#34;🏠 Show home dashboard&#34;</strong></li><li>Verify: Gemini returns a text introduction AND immediately renders the interactive A2UI dashboard cards!</li></ul></li><li><strong>Test Two-Way Interaction</strong>: <ul><li>Click the <strong>&#34;Turn OFF&#34;</strong> button next to <em>Living Room Ceiling</em>.</li><li>Watch the button immediately toggle to <strong>&#34;Turn ON&#34;</strong>, the status text update to <strong>&#34;OFF (0%)&#34;</strong>, and a toast notification appear confirming the update!</li><li>Click <strong>&#34;Warmer (73°F)&#34;</strong> on the Thermostat card. Notice the target temperature increment and the buttons adapt to the new state.</li></ul></li></ul><div class="step__note note--special"><p><strong>Success:</strong> You have verified that user interactions on client widgets seamlessly round-trip to the Python backend, update in-memory state, and refresh the UI without a full page reload! </p></div><p>Stop the server with <code>Ctrl+C</code>.</p><h2>Redeploy Upgraded Application to Cloud Run</h2><p>Deploy your A2UI application directly to Cloud Run:</p><pre><code language="language-bash" class="language-bash">gcloud run deploy smart-home-a2ui \
+  --source . \
+  --region &#34;${GOOGLE_CLOUD_REGION}&#34; \
+  --allow-unauthenticated \
+  --set-env-vars GOOGLE_CLOUD_PROJECT=&#34;${GOOGLE_CLOUD_PROJECT}&#34;,GOOGLE_CLOUD_REGION=&#34;${GOOGLE_CLOUD_REGION}&#34;
+</code></pre><p>Once the deployment completes, open the provided Service URL. You now have a complete, secure, agent-driven user interface running in Google Cloud!</p></div>
+    </div>
+
+  </div>
+
+  <script>
+    (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+    })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+    ga('create', 'UA-49880327-14', 'auto');
+
+    (function() {
+      var gaCodelab = '';
+      if (gaCodelab) {
+        ga('create', gaCodelab, 'auto', {name: 'codelab'});
+      }
+
+      var gaView;
+      var parts = location.search.substring(1).split('&');
+      for (var i = 0; i < parts.length; i++) {
+        var param = parts[i].split('=');
+        if (param[0] === 'viewga') {
+          gaView = param[1];
+          break;
+        }
+      }
+      if (gaView && gaView !== gaCodelab) {
+        ga('create', gaView, 'auto', {name: 'view'});
+      }
+    })();
+  </script>
+  <script src=".scripts/codelab.js" async></script>
+</body>
+</html>

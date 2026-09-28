@@ -1,0 +1,145 @@
+
+
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+  <title>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Code+Pro:400|Roboto:400,300,400italic,500,700|Roboto+Mono">
+  <link rel="stylesheet" href=".styles/codelab.css">
+  <style>
+    html {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+    }
+  </style>
+</head>
+
+<body class="codelab-takeover">
+  <div class="codelab__toc">
+    <a href="index.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">1</span>
+      <span class="toc-item__title">Introduction</span>
+    </a>
+    <a href="step-2.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">2</span>
+      <span class="toc-item__title">Environment &amp; Vertex AI Setup</span>
+    </a>
+    <a href="step-3.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">3</span>
+      <span class="toc-item__title">Building the Baseline Smart Home Agent</span>
+    </a>
+    <a href="step-4.html" class="toc-item toc-item--current">
+      <span class="toc-item__index">4</span>
+      <span class="toc-item__title">Deploying the Baseline to Cloud Run</span>
+    </a>
+    <a href="step-5.html" class="toc-item">
+      <span class="toc-item__index">5</span>
+      <span class="toc-item__title">Integrating the A2UI Client Renderer</span>
+    </a>
+    <a href="step-6.html" class="toc-item">
+      <span class="toc-item__index">6</span>
+      <span class="toc-item__title">Teaching Gemini A2UI (Prompt-First Catalog)</span>
+    </a>
+    <a href="step-7.html" class="toc-item">
+      <span class="toc-item__index">7</span>
+      <span class="toc-item__title">Adding Two-Way Interactivity &amp; Redeploying</span>
+    </a>
+    <a href="step-8.html" class="toc-item">
+      <span class="toc-item__index">8</span>
+      <span class="toc-item__title">Congratulations &amp; Clean Up</span>
+    </a>
+  </div>
+
+  <div class="codelab__step">
+
+    <div class="step__header">
+      <a href="step-3.html">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0 0h24v24H0z" fill="none"/>
+          <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+        </svg>
+      </a>
+
+      <a href=".index.html" title="Return to home page">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+          <path d="M0 0h24v24H0z" fill="none"/>
+        </svg>
+      </a>
+
+      <a href="step-5.html">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0 0h24v24H0z" fill="none"/>
+          <path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/>
+        </svg>
+      </a>
+
+      <h1>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</h1>
+    </div>
+
+    <div class="step__body">
+      <h1>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</h1>
+      <h2>4. Deploying the Baseline to Cloud Run</h2>
+      <div><p>Deploying early ensures your container builds cleanly and validates your Cloud Run environment and Vertex AI permissions before making deeper code additions.</p><h2>Create the <code>Dockerfile</code></h2><p>Create a production Dockerfile in <code>~/a2ui-codelab/01-baseline</code>:</p><pre><code language="language-bash" class="language-bash">cat &lt;&lt; &#39;EOF&#39; &gt; Dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8080
+
+CMD [&#34;uvicorn&#34;, &#34;main:app&#34;, &#34;--host&#34;, &#34;0.0.0.0&#34;, &#34;--port&#34;, &#34;8080&#34;]
+EOF
+</code></pre><h2>Deploy to Cloud Run</h2><p>Run <code>gcloud run deploy</code> directly from the source directory. Cloud Build will automatically build the container image and deploy it:</p><pre><code language="language-bash" class="language-bash">gcloud run deploy smart-home-baseline \
+  --source . \
+  --region &#34;${GOOGLE_CLOUD_REGION}&#34; \
+  --allow-unauthenticated \
+  --set-env-vars GOOGLE_CLOUD_PROJECT=&#34;${GOOGLE_CLOUD_PROJECT}&#34;,GOOGLE_CLOUD_REGION=&#34;${GOOGLE_CLOUD_REGION}&#34;
+</code></pre><p>When deployment finishes, <code>gcloud</code> outputs a live service URL:</p><pre><code>Service URL: https://smart-home-baseline-xxxxxx-uc.a.run.app
+</code></pre><p>Open the service URL in your browser. Verify that your baseline agent is live in the cloud and communicates successfully with Gemini on Vertex AI.</p></div>
+    </div>
+
+  </div>
+
+  <script>
+    (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+    })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+    ga('create', 'UA-49880327-14', 'auto');
+
+    (function() {
+      var gaCodelab = '';
+      if (gaCodelab) {
+        ga('create', gaCodelab, 'auto', {name: 'codelab'});
+      }
+
+      var gaView;
+      var parts = location.search.substring(1).split('&');
+      for (var i = 0; i < parts.length; i++) {
+        var param = parts[i].split('=');
+        if (param[0] === 'viewga') {
+          gaView = param[1];
+          break;
+        }
+      }
+      if (gaView && gaView !== gaCodelab) {
+        ga('create', gaView, 'auto', {name: 'view'});
+      }
+    })();
+  </script>
+  <script src=".scripts/codelab.js" async></script>
+</body>
+</html>

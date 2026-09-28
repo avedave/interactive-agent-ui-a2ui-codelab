@@ -1,0 +1,150 @@
+
+
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+  <title>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Code+Pro:400|Roboto:400,300,400italic,500,700|Roboto+Mono">
+  <link rel="stylesheet" href=".styles/codelab.css">
+  <style>
+    html {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+    }
+  </style>
+</head>
+
+<body class="codelab-takeover">
+  <div class="codelab__toc">
+    <a href="index.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">1</span>
+      <span class="toc-item__title">Introduction</span>
+    </a>
+    <a href="step-2.html" class="toc-item toc-item--current">
+      <span class="toc-item__index">2</span>
+      <span class="toc-item__title">Environment &amp; Vertex AI Setup</span>
+    </a>
+    <a href="step-3.html" class="toc-item">
+      <span class="toc-item__index">3</span>
+      <span class="toc-item__title">Building the Baseline Smart Home Agent</span>
+    </a>
+    <a href="step-4.html" class="toc-item">
+      <span class="toc-item__index">4</span>
+      <span class="toc-item__title">Deploying the Baseline to Cloud Run</span>
+    </a>
+    <a href="step-5.html" class="toc-item">
+      <span class="toc-item__index">5</span>
+      <span class="toc-item__title">Integrating the A2UI Client Renderer</span>
+    </a>
+    <a href="step-6.html" class="toc-item">
+      <span class="toc-item__index">6</span>
+      <span class="toc-item__title">Teaching Gemini A2UI (Prompt-First Catalog)</span>
+    </a>
+    <a href="step-7.html" class="toc-item">
+      <span class="toc-item__index">7</span>
+      <span class="toc-item__title">Adding Two-Way Interactivity &amp; Redeploying</span>
+    </a>
+    <a href="step-8.html" class="toc-item">
+      <span class="toc-item__index">8</span>
+      <span class="toc-item__title">Congratulations &amp; Clean Up</span>
+    </a>
+  </div>
+
+  <div class="codelab__step">
+
+    <div class="step__header">
+      <a href="index.html">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0 0h24v24H0z" fill="none"/>
+          <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+        </svg>
+      </a>
+
+      <a href=".index.html" title="Return to home page">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+          <path d="M0 0h24v24H0z" fill="none"/>
+        </svg>
+      </a>
+
+      <a href="step-3.html">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0 0h24v24H0z" fill="none"/>
+          <path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/>
+        </svg>
+      </a>
+
+      <h1>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</h1>
+    </div>
+
+    <div class="step__body">
+      <h1>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</h1>
+      <h2>2. Environment &amp; Vertex AI Setup</h2>
+      <div><p>In this step, you will prepare your Google Cloud environment, enable the necessary Cloud APIs, and configure Vertex AI access.</p><h2>Launch Google Cloud Shell</h2><p>Open the <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a> in your browser, log in to your Google Cloud account, and click the <strong>Activate Cloud Shell</strong> button in the top right corner.</p><p>Cloud Shell provides a pre-configured Linux terminal with <code>gcloud</code>, <code>python3</code>, and <code>git</code> already installed.</p><h2>Set your Project ID and Region</h2><p>In Cloud Shell, set your Google Cloud project and preferred region as shell environment variables:</p><pre><code language="language-bash" class="language-bash"># Set your active Google Cloud Project ID
+export GOOGLE_CLOUD_PROJECT=&#34;$(gcloud config get-value project)&#34;
+export GOOGLE_CLOUD_REGION=&#34;us-central1&#34;
+
+echo &#34;Project ID: ${GOOGLE_CLOUD_PROJECT}&#34;
+echo &#34;Region:     ${GOOGLE_CLOUD_REGION}&#34;
+</code></pre><h2>Enable Required Google Cloud APIs</h2><p>Enable the APIs for Cloud Run, Vertex AI, and Cloud Build:</p><pre><code language="language-bash" class="language-bash">gcloud services enable \
+  run.googleapis.com \
+  aiplatform.googleapis.com \
+  cloudbuild.googleapis.com
+</code></pre><h2>Configure IAM Permissions for Vertex AI</h2><p>When running in Google Cloud, your application authenticates via <strong>Application Default Credentials (ADC)</strong>.</p><p>For Cloud Run, the service executes using the default Compute Engine service account. You must grant this service account the <strong>Vertex AI User</strong> role so it can query Gemini models on Vertex AI:</p><pre><code language="language-bash" class="language-bash"># Retrieve the default compute service account number
+export PROJECT_NUMBER=&#34;$(gcloud projects describe ${GOOGLE_CLOUD_PROJECT} --format=&#39;value(projectNumber)&#39;)&#34;
+export CLOUD_RUN_SA=&#34;${PROJECT_NUMBER}-compute@developer.gserviceaccount.com&#34;
+
+# Grant the Vertex AI User role
+gcloud projects add-iam-policy-binding &#34;${GOOGLE_CLOUD_PROJECT}&#34; \
+  --member=&#34;serviceAccount:${CLOUD_RUN_SA}&#34; \
+  --role=&#34;roles/aiplatform.user&#34;
+</code></pre><div class="step__note note--special"><p><strong>Tip:</strong> If you are testing locally or from a machine outside Cloud Shell, run <code>gcloud auth application-default login</code> to authenticate your user account with Vertex AI. </p></div><h2>Create the Workspace Directory</h2><p>Create a dedicated directory for the codelab and set up a Python virtual environment:</p><pre><code language="language-bash" class="language-bash">mkdir -p ~/a2ui-codelab/01-baseline &amp;&amp; cd ~/a2ui-codelab/01-baseline
+python3 -m venv .venv
+source .venv/bin/activate
+</code></pre><h2>Install Dependencies</h2><p>Create a <code>requirements.txt</code> file pinned to recent stable versions:</p><pre><code language="language-bash" class="language-bash">cat &lt;&lt; &#39;EOF&#39; &gt; requirements.txt
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+google-genai==2.25.0
+EOF
+
+pip install -r requirements.txt
+</code></pre></div>
+    </div>
+
+  </div>
+
+  <script>
+    (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+    })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+    ga('create', 'UA-49880327-14', 'auto');
+
+    (function() {
+      var gaCodelab = '';
+      if (gaCodelab) {
+        ga('create', gaCodelab, 'auto', {name: 'codelab'});
+      }
+
+      var gaView;
+      var parts = location.search.substring(1).split('&');
+      for (var i = 0; i < parts.length; i++) {
+        var param = parts[i].split('=');
+        if (param[0] === 'viewga') {
+          gaView = param[1];
+          break;
+        }
+      }
+      if (gaView && gaView !== gaCodelab) {
+        ga('create', gaView, 'auto', {name: 'view'});
+      }
+    })();
+  </script>
+  <script src=".scripts/codelab.js" async></script>
+</body>
+</html>

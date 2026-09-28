@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home Assistant (A2UI)</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script type="module" src="/static/a2ui-bridge.js"></script>
+</head>
+<body>
+  <header>
+    <div class="header-title">
+      <h1>Smart Home Assistant</h1>
+      <span class="badge-a2ui">A2UI Reporting</span>
+    </div>
+  </header>
+
+  <main class="chat-container" id="chatContainer">
+    <div class="message-wrapper assistant">
+      <div class="message-sender">Gemini Assistant</div>
+      <div class="message-bubble">
+        Hello! I am your Smart Home Assistant. I monitor your home sensors (thermostat, air quality, alarms, locks, and battery health).
+        <br><br>
+        • Try asking: <em>"What is a healthy indoor humidity?"</em> (I'll respond with conversational text advice).<br>
+        • Or ask: <em>"What needs my attention?"</em> or <em>"Show all sensor readings"</em> (I'll generate an interactive A2UI dashboard).
+      </div>
+    </div>
+  </main>
+
+  <footer class="composer-container">
+    <div class="quick-prompts">
+      <button class="quick-chip" onclick="sendQuickPrompt('What needs my attention?')">⚠️ What needs my attention?</button>
+      <button class="quick-chip" onclick="sendQuickPrompt('Show all sensor readings')">📊 Show all sensor readings</button>
+      <button class="quick-chip" onclick="sendQuickPrompt('What is the living room temperature?')">🌡️ Living room temp?</button>
+      <button class="quick-chip" onclick="sendQuickPrompt('What is a healthy indoor humidity?')">❓ Healthy humidity?</button>
+    </div>
+    <form class="composer-form" id="chatForm">
+      <input type="text" id="userInput" class="composer-input" placeholder="Ask about sensors or health status..." autocomplete="off" required>
+      <button type="submit" id="sendBtn" class="composer-button">Send</button>
+    </form>
+  </footer>
+
+  <script>
+    const chatContainer = document.getElementById('chatContainer');
+    const chatForm = document.getElementById('chatForm');
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const history = [];
+
+    function appendMessage(role, text, a2uiSurfaceData = null) {
+      const wrapper = document.createElement('div');
+      wrapper.className = `message-wrapper ${role}`;
+
+      const sender = document.createElement('div');
+      sender.className = 'message-sender';
+      sender.textContent = role === 'user' ? 'You' : 'Gemini Assistant';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'message-bubble';
+      if (text) bubble.textContent = text;
+
+      wrapper.appendChild(sender);
+      wrapper.appendChild(bubble);
+
+      // If A2UI surface payload is returned, render via official A2UI MessageProcessor / Lit bridge
+      if (a2uiSurfaceData) {
+        const surfaceContainer = document.createElement('div');
+        surfaceContainer.className = 'surface-wrapper';
+        bubble.appendChild(surfaceContainer);
+
+        if (typeof window.renderA2UIMessages === 'function') {
+          window.renderA2UIMessages(surfaceContainer, a2uiSurfaceData).then(() => {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+          });
+        }
+      }
+
+      chatContainer.appendChild(wrapper);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+      return bubble;
+    }
+
+    async function handleSendMessage(messageText) {
+      if (!messageText.trim()) return;
+
+      appendMessage('user', messageText);
+      history.push({ role: 'user', content: messageText });
+      userInput.value = '';
+      sendBtn.disabled = true;
+
+      const loadingBubble = appendMessage('assistant', 'Analyzing telemetry...');
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: messageText, history: history.slice(0, -1) })
+        });
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({ detail: 'Network error' }));
+          throw new Error(err.detail || `Server error ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        // Remove temporary loading bubble
+        loadingBubble.closest('.message-wrapper').remove();
+
+        // Support both baseline (data.response string) and A2UI (data.text + data.a2ui)
+        const textMsg = data.text || data.response || '';
+        appendMessage('assistant', textMsg, data.a2ui || null);
+        history.push({ role: 'model', content: textMsg });
+      } catch (err) {
+        loadingBubble.textContent = `⚠️ Error: ${err.message}`;
+      } finally {
+        sendBtn.disabled = false;
+        userInput.focus();
+      }
+    }
+
+    chatForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      handleSendMessage(userInput.value);
+    });
+
+    window.sendQuickPrompt = function(text) {
+      userInput.value = text;
+      handleSendMessage(text);
+    };
+  </script>
+</body>
+</html>

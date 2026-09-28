@@ -1,0 +1,33 @@
+{
+  "environment": "web",
+  "format": "html",
+  "prefix": ".",
+  "mainga": "UA-49880327-14",
+  "updated": "2026-09-28T11:31:40+02:00",
+  "id": "interactive-agent-ui-a2ui-gemini",
+  "duration": 53,
+  "title": "Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run",
+  "authors": "Google DeepMind",
+  "summary": "Build interactive agent-driven user interfaces using A2UI v0.9.1, Gemini 3.8 Flash on Vertex AI, and Google Cloud Run.",
+  "source": "codelab.md",
+  "theme": "",
+  "status": [
+    "published"
+  ],
+  "category": [
+    "web",
+    "cloud",
+    "ai"
+  ],
+  "tags": [
+    "a2ui",
+    "cloudrun",
+    "gemini",
+    "python",
+    "vertexai",
+    "web",
+    "webcomponents"
+  ],
+  "feedback": "https://github.com/a2ui-project/a2ui/issues",
+  "url": "interactive-agent-ui-a2ui-gemini"
+}

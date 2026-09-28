@@ -1,0 +1,17 @@
+# Python virtual environments & bytecode
+.venv/
+env/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.log

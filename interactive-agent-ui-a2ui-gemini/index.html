@@ -1,0 +1,685 @@
+
+<!doctype html>
+
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+  <meta name="theme-color" content="#4F7DC9">
+  <meta charset="UTF-8">
+  <title>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</title>
+  <link rel="stylesheet" href="//fonts.googleapis.com/css?family=Source+Code+Pro:400|Roboto:400,300,400italic,500,700|Roboto+Mono">
+  <link rel="stylesheet" href="//fonts.googleapis.com/icon?family=Material+Icons">
+  <link rel="stylesheet" href="./claat-public/codelab-elements.css">
+  <style>
+    .success {
+      color: #1e8e3e;
+    }
+    .error {
+      color: red;
+    }
+  </style>
+</head>
+<body>
+  <google-codelab-analytics gaid="UA-49880327-14"></google-codelab-analytics>
+  <google-codelab codelab-gaid=""
+                  id="interactive-agent-ui-a2ui-gemini"
+                  title="Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run"
+                  environment="web"
+                  feedback-link="https://github.com/a2ui-project/a2ui/issues">
+    
+      <google-codelab-step label="Introduction" duration="5">
+        <h2 is-upgraded>What is A2UI?</h2>
+<p>When AI agents interact with users today, they are almost universally confined to plain text or Markdown. While Markdown works well for paragraphs and bulleted summaries, it falls short when users need to monitor live telemetry, inspect status indicators, scan dashboards, or review alert cards.</p>
+<p>Historically, giving an agent the ability to display a graphical UI required sending executable code (such as raw HTML, JavaScript, or iframe embeds) to the client. However, <strong>executing arbitrary code from an AI model across a trust boundary is a major security vulnerability</strong> (risk of cross-site scripting, arbitrary script execution, and unvetted DOM manipulation).</p>
+<p><strong>A2UI (Agent-to-User Interface)</strong> is an open declarative protocol that solves this problem. Instead of sending executable code, the agent sends <strong>declarative JSON descriptions of UI components</strong>. The client receives this structured data and renders it natively using trusted UI widgets (Web Components, Lit, React, Flutter, or native mobile views).</p>
+<pre><code>┌─────────────────────────────────┐               ┌──────────────────────────────────┐
+│      Gemini 3.8 Flash Agent     │               │        Client Application        │
+│  (Cloud Run / Vertex AI Python) │               │   (Browser with Web Components)  │
+└────────────────┬────────────────┘               └────────────────▲─────────────────┘
+                 │                                                 │
+                 │ 1. Declarative A2UI v0.9.1 JSON                 │ 2. Native Render
+                 │    &lt;a2ui-json&gt;[ createSurface, ... ]            │    &lt;a2ui-surface&gt;
+                 ▼                                                 │
+   ┌───────────────────────────────────────────────────────────────┴──────────────────┐
+   │                                TRUST BOUNDARY                                    │
+   │  No executable JavaScript or arbitrary HTML — only structured, pre-approved data │
+   └──────────────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>In this hands-on codelab, you will build an intelligent <strong>Smart Home Telemetry Assistant</strong>. You will start with a baseline text-only agent running Gemini on Vertex AI, deploy it early to Google Cloud Run, and then upgrade the backend using <strong>A2UI v0.9.1</strong> and the official <strong><code>a2ui-agent-sdk</code></strong>. Gemini will dynamically generate rich visual cards for sensor telemetry and device alerts while keeping general advice in plain text.</p>
+<h2 class="checklist" is-upgraded>What you&#39;ll learn</h2>
+<ul class="checklist">
+<li>The core concepts and trust-boundary security of the A2UI declarative protocol.</li>
+<li>How to connect a Python FastAPI backend to <strong>Gemini 3.8 Flash</strong> using the <code>google-genai</code> SDK on <strong>Vertex AI</strong>.</li>
+<li>How to equip Gemini with a <strong>Tool</strong> to inspect simulated smart home telemetry.</li>
+<li>How to deploy a containerized application to <strong>Google Cloud Run</strong>.</li>
+<li>How to use the official <strong><code>a2ui-agent-sdk</code></strong> and <code>A2uiSchemaManager</code> to generate standard A2UI v0.9.1 prompts programmatically instead of maintaining custom text blobs.</li>
+<li>How to embed an A2UI client renderer (<code>&lt;a2ui-surface&gt;</code>) into a web interface with <strong>zero build steps</strong> using browser ES modules.</li>
+<li>How to test queries like <em>&#34;What needs my attention?&#34;</em> to detect low batteries and display visual alert cards.</li>
+</ul>
+<h2 is-upgraded>Prerequisites</h2>
+<ul>
+<li>Basic experience with terminal commands and Python.</li>
+<li>A Google Cloud Project with billing enabled.</li>
+<li>Access to Google Cloud Shell or a local machine with the Google Cloud SDK (<code>gcloud</code>) installed.</li>
+</ul>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Environment &amp; Vertex AI Setup" duration="8">
+        <p>In this step, you will prepare your Google Cloud environment, enable the necessary Cloud APIs, configure IAM access for Vertex AI, and examine the starter repository.</p>
+<h2 is-upgraded>Launch Google Cloud Shell</h2>
+<p>Open the <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a> in your browser, log in to your Google Cloud account, and click the <strong>Activate Cloud Shell</strong> button in the top right corner.</p>
+<p>Cloud Shell provides a pre-configured Linux terminal with <code>gcloud</code>, <code>python3</code>, and <code>git</code> already installed.</p>
+<h2 is-upgraded>Set your Project ID and Region</h2>
+<p>In Cloud Shell, set your Google Cloud project and preferred region as shell environment variables:</p>
+<pre><code language="language-bash" class="language-bash"># Set your active Google Cloud Project ID
+export GOOGLE_CLOUD_PROJECT=&#34;$(gcloud config get-value project)&#34;
+export GOOGLE_CLOUD_REGION=&#34;us-central1&#34;
+
+echo &#34;Project ID: ${GOOGLE_CLOUD_PROJECT}&#34;
+echo &#34;Region:     ${GOOGLE_CLOUD_REGION}&#34;
+</code></pre>
+<h2 is-upgraded>Enable Required Google Cloud APIs</h2>
+<p>Enable the APIs for Cloud Run, Vertex AI, and Cloud Build:</p>
+<pre><code language="language-bash" class="language-bash">gcloud services enable \
+  run.googleapis.com \
+  aiplatform.googleapis.com \
+  cloudbuild.googleapis.com
+</code></pre>
+<h2 is-upgraded>Configure IAM Permissions for Vertex AI</h2>
+<p>When deploying to Google Cloud Run, your container runs by default under the <strong>Compute Engine default service account</strong>. Grant this service account the <code>roles/aiplatform.user</code> role so it can authenticate against Vertex AI via Application Default Credentials (ADC):</p>
+<pre><code language="language-bash" class="language-bash"># Retrieve project number
+PROJECT_NUMBER=&#34;$(gcloud projects describe ${GOOGLE_CLOUD_PROJECT} --format=&#39;value(projectNumber)&#39;)&#34;
+
+# Grant Vertex AI User role to the default service account
+gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
+  --member=&#34;serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com&#34; \
+  --role=&#34;roles/aiplatform.user&#34;
+</code></pre>
+<aside class="special"><p><strong>Tip:</strong> Configuring IAM roles early ensures that your Cloud Run deployment can call Gemini on Vertex AI immediately upon deployment without authentication errors. </p>
+</aside>
+<h2 is-upgraded>Clone and Inspect the Starter Repository</h2>
+<p>To focus directly on backend logic, Gemini prompting, and A2UI rendering, clone the pre-built starter repository which already includes the web frontend boilerplate (<code>index.html</code>, <code>styles.css</code>, <code>a2ui-bridge.js</code>), <code>Dockerfile</code>, and <code>sensors.py</code>:</p>
+<pre><code language="language-bash" class="language-bash">git clone https://github.com/avedave/smart-home-a2ui-starter.git
+cd smart-home-a2ui-starter
+</code></pre>
+<aside class="warning"><p><strong>Note:</strong> If you are already working directly in the project workspace, simply navigate to the workspace directory: <code>cd ~/projects/a2ui/ag</code>. </p>
+</aside>
+<h2 is-upgraded>Install Dependencies</h2>
+<p>Set up a virtual environment and install the required dependencies:</p>
+<pre><code language="language-bash" class="language-bash">python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+</code></pre>
+<p>The <code>requirements.txt</code> file includes:</p>
+<ul>
+<li><code>fastapi==0.141.1</code>: Modern, lightweight asynchronous web framework.</li>
+<li><code>uvicorn[standard]==0.54.0</code>: High-performance ASGI web server.</li>
+<li><code>google-genai==2.25.0</code>: Google Gen AI SDK for Python with Vertex AI support.</li>
+<li><code>a2ui-agent-sdk==0.6.0</code>: Official A2UI Python SDK providing <code>A2uiSchemaManager</code> and <code>BasicCatalog</code>.</li>
+</ul>
+<h2 is-upgraded>Inspect <code>sensors.py</code></h2>
+<p>Open and view <code>sensors.py</code>. This module provides simulated telemetry from smart home sensors:</p>
+<pre><code language="language-python" class="language-python">SMART_HOME_SENSORS = {
+    &#34;climate&#34;: {
+        &#34;thermostat&#34;: {
+            &#34;name&#34;: &#34;Living Room Thermostat&#34;,
+            &#34;current_temperature&#34;: 71,
+            &#34;target_temperature&#34;: 72,
+            &#34;humidity&#34;: 45,
+            &#34;mode&#34;: &#34;heat&#34;,
+            &#34;battery_percent&#34;: 92,
+            &#34;status&#34;: &#34;normal&#34;,
+        },
+    },
+    &#34;environmental&#34;: {
+        &#34;nursery_air_sensor&#34;: {
+            &#34;name&#34;: &#34;Nursery Air Quality Monitor&#34;,
+            &#34;co2_ppm&#34;: 540,
+            &#34;voc_index&#34;: &#34;Good&#34;,
+            &#34;humidity&#34;: 48,
+            &#34;battery_percent&#34;: 14,  # LOW BATTERY! Needs attention
+            &#34;status&#34;: &#34;low_battery_warning&#34;,
+        },
+        &#34;basement_water_sensor&#34;: {
+            &#34;name&#34;: &#34;Basement Water Leak Detector&#34;,
+            &#34;moisture_detected&#34;: False,
+            &#34;battery_percent&#34;: 95,
+            &#34;status&#34;: &#34;normal&#34;,
+        },
+    },
+    &#34;safety&#34;: {
+        &#34;hallway_smoke_detector&#34;: {
+            &#34;name&#34;: &#34;Hallway Smoke &amp; CO Alarm&#34;,
+            &#34;smoke_detected&#34;: False,
+            &#34;co_detected&#34;: False,
+            &#34;battery_percent&#34;: 11,  # CRITICALLY LOW BATTERY! Needs attention
+            &#34;status&#34;: &#34;critical_battery&#34;,
+        },
+    },
+    &#34;security&#34;: {
+        &#34;front_door_lock&#34;: {
+            &#34;name&#34;: &#34;Front Door Smart Lock&#34;,
+            &#34;state&#34;: &#34;locked&#34;,
+            &#34;battery_percent&#34;: 88,
+            &#34;status&#34;: &#34;normal&#34;,
+        },
+        &#34;garage_door&#34;: {
+            &#34;name&#34;: &#34;Garage Overhead Door&#34;,
+            &#34;state&#34;: &#34;closed&#34;,
+            &#34;battery_percent&#34;: 90,
+            &#34;status&#34;: &#34;normal&#34;,
+        },
+    },
+    &#34;lighting&#34;: {
+        &#34;living_room&#34;: {&#34;name&#34;: &#34;Living Room Ceiling&#34;, &#34;state&#34;: &#34;on&#34;, &#34;brightness&#34;: 80},
+        &#34;kitchen&#34;: {&#34;name&#34;: &#34;Kitchen Pendant&#34;, &#34;state&#34;: &#34;off&#34;, &#34;brightness&#34;: 0},
+        &#34;bedroom&#34;: {&#34;name&#34;: &#34;Bedroom Lamp&#34;, &#34;state&#34;: &#34;on&#34;, &#34;brightness&#34;: 50},
+    },
+}
+
+def get_sensor_report() -&gt; Dict[str, Any]:
+    &#34;&#34;&#34;Retrieves a comprehensive status report from all smart home sensors.&#34;&#34;&#34;
+    return SMART_HOME_SENSORS
+</code></pre>
+<aside class="special"><p><strong>Key Scenario:</strong> Notice the two battery conditions: the <strong>Nursery Air Quality Monitor</strong> is down to 14% (warning), and the <strong>Hallway Smoke &amp; CO Alarm</strong> has dropped to a critical 11%. Later in this codelab, you will ask Gemini: <em>&#34;What needs my attention?&#34;</em> and see how A2UI highlights these urgent warnings. </p>
+</aside>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Building the Baseline Text Agent" duration="10">
+        <p>Before introducing A2UI, you will create a baseline agent in <code>main.py</code> that interacts with Gemini 3.8 Flash on Vertex AI and returns traditional text-only responses.</p>
+<h2 is-upgraded>Author <code>main.py</code></h2>
+<p>Create or edit <code>main.py</code> in your project root with the following implementation:</p>
+<pre><code language="language-python" class="language-python">import os
+from typing import Any, Dict, List, Optional
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from google import genai
+from google.genai import types
+
+from sensors import get_sensor_report
+
+app = FastAPI(title=&#34;Smart Home Assistant&#34;)
+
+# Configure Vertex AI Gemini Client
+PROJECT_ID = os.environ.get(&#34;GOOGLE_CLOUD_PROJECT&#34;) or os.environ.get(&#34;GCP_PROJECT&#34;)
+LOCATION = os.environ.get(&#34;GOOGLE_CLOUD_REGION&#34;, &#34;us-central1&#34;)
+
+client = genai.Client(
+    vertexai=True,
+    project=PROJECT_ID,
+    location=LOCATION,
+)
+
+BASELINE_SYSTEM_INSTRUCTION = &#34;&#34;&#34;You are a helpful Smart Home Voice &amp; Telemetry Assistant.
+You monitor IoT home sensors: climate, indoor air quality, smoke detectors, security locks, and battery health.
+You have access to the `get_sensor_report` tool to inspect real-time sensor data.
+Provide helpful, friendly text answers to user questions.&#34;&#34;&#34;
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class ChatRequest(BaseModel):
+    message: str
+    history: Optional[List[ChatMessage]] = None
+
+class ChatResponse(BaseModel):
+    text: str
+    a2ui: Optional[Any] = None
+
+@app.post(&#34;/api/chat&#34;, response_model=ChatResponse)
+async def chat_endpoint(req: ChatRequest):
+    try:
+        contents = []
+        if req.history:
+            for msg in req.history:
+                contents.append(types.Content(
+                    role=msg.role,
+                    parts=[types.Part.from_text(text=msg.content)]
+                ))
+        contents.append(types.Content(
+            role=&#34;user&#34;,
+            parts=[types.Part.from_text(text=req.message)]
+        ))
+
+        config = types.GenerateContentConfig(
+            system_instruction=BASELINE_SYSTEM_INSTRUCTION,
+            temperature=0.3,
+            tools=[get_sensor_report],
+        )
+
+        response = client.models.generate_content(
+            model=&#34;gemini-3.8-flash&#34;,
+            contents=contents,
+            config=config,
+        )
+
+        return ChatResponse(text=response.text or &#34;No response generated.&#34;, a2ui=None)
+    except Exception as e:
+        print(f&#34;Error calling Gemini: {e}&#34;)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(&#34;/api/sensors&#34;)
+async def sensors_endpoint():
+    &#34;&#34;&#34;Returns raw sensor telemetry.&#34;&#34;&#34;
+    return get_sensor_report()
+
+# Mount static frontend
+static_dir = os.path.join(os.path.dirname(__file__), &#34;static&#34;)
+if os.path.exists(static_dir):
+    app.mount(&#34;/static&#34;, StaticFiles(directory=static_dir), name=&#34;static&#34;)
+
+@app.get(&#34;/&#34;)
+async def root():
+    index_file = os.path.join(static_dir, &#34;index.html&#34;)
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+    return {&#34;message&#34;: &#34;Smart Home Telemetry API running.&#34;}
+
+if __name__ == &#34;__main__&#34;:
+    import uvicorn
+    port = int(os.environ.get(&#34;PORT&#34;, 8080))
+    uvicorn.run(&#34;main:app&#34;, host=&#34;0.0.0.0&#34;, port=port, reload=True)
+</code></pre>
+<h2 is-upgraded>Key Architectural Concepts in <code>main.py</code></h2>
+<ol type="1">
+<li><strong>Vertex AI Initialization:</strong> The <code>genai.Client(vertexai=True, ...)</code> initializes the unified <code>google-genai</code> SDK using Google Cloud credentials.</li>
+<li><strong>Function Calling (Tools):</strong> We pass <code>tools=[get_sensor_report]</code> to <code>types.GenerateContentConfig</code>. When the user asks about the home, Gemini automatically calls <code>get_sensor_report()</code> to fetch the real-time sensor dictionary.</li>
+<li><strong>Model Selection:</strong> We use <code>gemini-3.8-flash</code>, offering low latency, cost efficiency, and strong reasoning capabilities for function calling.</li>
+</ol>
+<h2 is-upgraded>Test the Baseline Agent Locally</h2>
+<p>Start the local server:</p>
+<pre><code language="language-bash" class="language-bash">uvicorn main:app --reload --port 8080
+</code></pre>
+<p>Click <strong>Web Preview</strong> in the top right of Cloud Shell and select <strong>Preview on port 8080</strong>.</p>
+<p>Try two different prompts:</p>
+<ol type="1">
+<li><strong>Conversational Question:</strong><ul>
+<li>Prompt: <em>&#34;What is a healthy indoor humidity?&#34;</em></li>
+<li>Result: Gemini provides a helpful, friendly paragraph explaining that 30% to 50% relative humidity is ideal. This is a great user experience for text.</li>
+</ul>
+</li>
+<li><strong>Telemetry / Status Check:</strong><ul>
+<li>Prompt: <em>&#34;Show all sensor readings&#34;</em> or <em>&#34;What is the status of my home?&#34;</em></li>
+<li>Result: Gemini fetches the sensor dictionary and outputs a long list of bullet points or a wall of text.</li>
+</ul>
+</li>
+</ol>
+<aside class="warning"><p><strong>The Text-Only UX Problem:</strong> Notice the contrast. While text works well for explanations, scanning through paragraphs of bullet points to find which battery is dead or which alarm is triggering is slow, error-prone, and cumbersome. Users expect visual dashboards and status badges for IoT devices. </p>
+</aside>
+<p>Press <code>Ctrl+C</code> in your terminal to stop the local test server before proceeding.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Deploying the Baseline to Cloud Run" duration="7">
+        <p>Deploying to Google Cloud Run early allows you to verify that containerization, Cloud Build, IAM service account permissions, and Vertex AI connectivity work end-to-end.</p>
+<h2 is-upgraded>Review the <code>Dockerfile</code></h2>
+<p>The starter repository contains a production-ready <code>Dockerfile</code>:</p>
+<pre><code language="language-dockerfile" class="language-dockerfile">FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PORT=8080
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD [&#34;uvicorn&#34;, &#34;main:app&#34;, &#34;--host&#34;, &#34;0.0.0.0&#34;, &#34;--port&#34;, &#34;8080&#34;]
+</code></pre>
+<h2 is-upgraded>Deploy to Cloud Run</h2>
+<p>Run <code>gcloud run deploy</code> to build and deploy your container from source:</p>
+<pre><code language="language-bash" class="language-bash">gcloud run deploy smart-home-a2ui \
+  --source . \
+  --region &#34;${GOOGLE_CLOUD_REGION}&#34; \
+  --allow-unauthenticated \
+  --set-env-vars GOOGLE_CLOUD_PROJECT=&#34;${GOOGLE_CLOUD_PROJECT}&#34;,GOOGLE_CLOUD_REGION=&#34;${GOOGLE_CLOUD_REGION}&#34;
+</code></pre>
+<p>When prompted to confirm the service name or creation, press <strong>Enter</strong>.</p>
+<p>Google Cloud Build will package the container, upload it to Artifact Registry, and launch a Cloud Run service.</p>
+<p>Once the command completes, you will see a service URL in your terminal:</p>
+<pre><code>Service [smart-home-a2ui] revision [smart-home-a2ui-00001-xxx] has been deployed and is serving 100 percent of traffic.
+Service URL: https://smart-home-a2ui-xxxxxx-uc.a.run.app
+</code></pre>
+<p>Open the <strong>Service URL</strong> in your browser. You now have a live, cloud-hosted smart home agent running on Cloud Run!</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Understanding A2UI v0.9.1 &amp; The Client Renderer" duration="8">
+        <p>Now that the baseline agent is running in the cloud, let&#39;s explore how <strong>A2UI v0.9.1</strong> bridges the gap between text chat and rich graphical user interfaces without compromising security.</p>
+<h2 is-upgraded>Declarative UI vs. Executable Code</h2>
+<p>Why not have Gemini generate raw HTML or React code?</p>
+<ul>
+<li><strong>Security Vulnerability:</strong> Models generating raw HTML/JS can introduce Cross-Site Scripting (XSS), script injection, or bypass client-side security policies.</li>
+<li><strong>Fragile Styling:</strong> Raw HTML code generated by an LLM frequently clashes with the host application&#39;s theme, layout, and responsiveness.</li>
+<li><strong>Lack of Governance:</strong> The client application has no control over what elements the model creates.</li>
+</ul>
+<p><strong>A2UI v0.9.1 solves this with a prompt-first, declarative message protocol.</strong> Instead of arbitrary code, the server streams structured JSON messages:</p>
+<ol type="1">
+<li><strong><code>createSurface</code></strong>: Signals the client to initialize a rendering surface.</li>
+<li><strong><code>updateComponents</code></strong>: Sends a flat array of component definitions (with ID references for parent-child hierarchies).</li>
+<li><strong><code>updateDataModel</code></strong>: Updates or populates dynamic data bindings separately from the UI structure.</li>
+</ol>
+<p>Here is an example A2UI v0.9.1 message payload:</p>
+<pre><code language="language-json" class="language-json">[
+  {
+    &#34;createSurface&#34;: {
+      &#34;surfaceId&#34;: &#34;smoke-alarm-alert&#34;,
+      &#34;catalogId&#34;: &#34;https://a2ui.org/specification/v0_9_1/catalogs/basic/catalog.json&#34;
+    }
+  },
+  {
+    &#34;updateComponents&#34;: {
+      &#34;surfaceId&#34;: &#34;smoke-alarm-alert&#34;,
+      &#34;components&#34;: [
+        {
+          &#34;id&#34;: &#34;root&#34;,
+          &#34;component&#34;: &#34;Card&#34;,
+          &#34;child&#34;: &#34;content-col&#34;
+        },
+        {
+          &#34;id&#34;: &#34;content-col&#34;,
+          &#34;component&#34;: &#34;Column&#34;,
+          &#34;children&#34;: [&#34;title-text&#34;, &#34;status-text&#34;]
+        },
+        {
+          &#34;id&#34;: &#34;title-text&#34;,
+          &#34;component&#34;: &#34;Text&#34;,
+          &#34;text&#34;: &#34;Hallway Smoke &amp; CO Alarm&#34;,
+          &#34;variant&#34;: &#34;h2&#34;
+        },
+        {
+          &#34;id&#34;: &#34;status-text&#34;,
+          &#34;component&#34;: &#34;Text&#34;,
+          &#34;text&#34;: &#34;Battery: 11% (CRITICAL)&#34;,
+          &#34;variant&#34;: &#34;caption&#34;
+        }
+      ]
+    }
+  }
+]
+</code></pre>
+<p>The client receives this JSON and maps it to pre-vetted, styled components. No code is executed; only pre-approved components from the catalog are rendered!</p>
+<h2 is-upgraded>The Standard 18 Primitives (<code>BasicCatalog</code>)</h2>
+<p>A2UI v0.9.1 provides 18 standard primitives organized into four categories:</p>
+<table>
+<tr><td colspan="1" rowspan="1"><p>Category</p>
+</td><td colspan="1" rowspan="1"><p>Primitives</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><strong>Layout</strong></p>
+</td><td colspan="1" rowspan="1"><p><code>Card</code>, <code>Column</code>, <code>Row</code>, <code>List</code>, <code>Tabs</code>, <code>Divider</code>, <code>Modal</code></p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><strong>Display</strong></p>
+</td><td colspan="1" rowspan="1"><p><code>Text</code>, <code>Image</code>, <code>Icon</code>, <code>Video</code>, <code>AudioPlayer</code></p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><strong>Input</strong></p>
+</td><td colspan="1" rowspan="1"><p><code>TextField</code>, <code>CheckBox</code>, <code>ChoicePicker</code>, <code>Slider</code>, <code>DateTimeInput</code></p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><strong>Action</strong></p>
+</td><td colspan="1" rowspan="1"><p><code>Button</code></p>
+</td></tr>
+</table>
+<h2 is-upgraded>The Two-Tier Web Architecture</h2>
+<p>According to the official <a href="https://github.com/a2ui-project/a2ui/blob/main/docs/public/guides/client-setup.md" target="_blank">A2UI Client Setup Guide</a>, web frontends for A2UI are built on two distinct layers:</p>
+<pre><code>┌────────────────────────────────────────────────────────┐
+│               Agent (Python / Gemini)                 │
+│         Emits A2UI v0.9 Protocol Messages              │
+└───────────────────────────┬────────────────────────────┘
+                            │ (JSON stream)
+┌───────────────────────────▼────────────────────────────┐
+│         Shared Foundation: @a2ui/web_core              │
+│  • MessageProcessor (processes stream &amp; envelopes)     │
+│  • SurfaceModel, ComponentModel, DataModel             │
+│  • Reactive signals &amp; data path binding ({&#34;path&#34;: ..}) │
+│  • Action dispatching (userAction envelopes)           │
+└───────────────┬────────────────────────┬───────────────┘
+                │                        │
+┌───────────────▼────────┐      ┌────────▼───────────────┐
+│     @a2ui/lit          │      │  @a2ui/react / Angular │
+│  • &lt;a2ui-surface&gt;      │      │  • React hooks / ctx   │
+│  • basicCatalog (v0.9) │      │  • Angular service     │
+└────────────────────────┘      └────────────────────────┘
+</code></pre>
+<ol type="1">
+<li><strong>Shared Foundation (</strong><strong><code>@a2ui/web_core</code></strong><strong>)</strong>: Provides the <code>MessageProcessor</code> that parses the stream of protocol messages (<code>createSurface</code>, <code>updateComponents</code>, <code>updateDataModel</code>, <code>deleteSurface</code>), builds the reactive <code>SurfaceModel</code>, and manages decoupled data bindings.</li>
+<li><strong>Framework Presentation (</strong><strong><code>@a2ui/lit</code></strong><strong>, </strong><strong><code>@a2ui/react</code></strong><strong>, </strong><strong><code>@a2ui/angular</code></strong><strong>)</strong>: Provides pre-styled, accessible UI components. For Web Components, <code>@a2ui/lit</code> registers the official <code>&lt;a2ui-surface&gt;</code> custom element and provides the standard <code>basicCatalog</code> containing all 18 primitives.</li>
+</ol>
+<h2 is-upgraded>The A2UI Client Bridge (<code>static/a2ui-bridge.js</code>)</h2>
+<p>In <code>static/a2ui-bridge.js</code>, we import the official <code>@a2ui/web_core</code> and <code>@a2ui/lit</code> packages directly in the browser via modern ESM without requiring any Node.js, <code>npm</code>, or Vite build step:</p>
+<pre><code language="language-javascript" class="language-javascript">import { MessageProcessor, injectBasicCatalogStyles } from &#39;https://esm.sh/@a2ui/web_core@0.11.0/v0_9&#39;;
+import { basicCatalog } from &#39;https://esm.sh/@a2ui/lit@0.11.0/v0_9&#39;;
+
+// Initialize the official A2UI MessageProcessor with the basic catalog
+const processor = new MessageProcessor([basicCatalog]);
+injectBasicCatalogStyles(document);
+
+export async function renderA2UIMessages(container, messages) {
+  // Feed incoming A2UI envelopes into the MessageProcessor
+  processor.processMessages(messages);
+
+  const surface = processor.model.surfacesMap.get(&#39;attention-dashboard&#39;);
+  if (surface) {
+    const surfaceEl = document.createElement(&#39;a2ui-surface&#39;);
+    // Bind the reactive SurfaceModel to the official Lit custom element
+    surfaceEl.surface = surface;
+    container.appendChild(surfaceEl);
+    await surfaceEl.updateComplete;
+    return surfaceEl;
+  }
+}
+</code></pre>
+<p>The bridge also includes a resilient offline fallback so the application continues to render cleanly even in air-gapped or offline environments.</p>
+<h2 is-upgraded>Client Chat Integration (<code>static/index.html</code>)</h2>
+<p>When the user submits a message, <code>static/index.html</code> calls <code>/api/chat</code>. If the response contains an <code>a2ui</code> surface payload, it calls <code>window.renderA2UIMessages</code> to mount the official <code>&lt;a2ui-surface&gt;</code>:</p>
+<pre><code language="language-javascript" class="language-javascript">if (a2uiSurfaceData) {
+  const surfaceContainer = document.createElement(&#39;div&#39;);
+  surfaceContainer.className = &#39;surface-wrapper&#39;;
+  bubble.appendChild(surfaceContainer);
+
+  if (typeof window.renderA2UIMessages === &#39;function&#39;) {
+    window.renderA2UIMessages(surfaceContainer, a2uiSurfaceData).then(() =&gt; {
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    });
+  }
+}
+</code></pre>
+<p>Now let&#39;s teach Gemini how to generate this A2UI v0.9.1 JSON using <code>a2ui-agent-sdk</code>!</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Upgrading the Agent with A2UI &amp; A2uiSchemaManager" duration="12">
+        <p>Instead of authoring a custom, hand-crafted system prompt (&#34;blob of text&#34;), we will use the official <strong><code>a2ui-agent-sdk</code></strong> package and its <code>A2uiSchemaManager</code>.</p>
+<h2 is-upgraded>Why use <code>A2uiSchemaManager</code>?</h2>
+<ol type="1">
+<li><strong>Prompt-First Schema Generation:</strong> Automatically generates the complete A2UI v0.9.1 JSON Schema, component catalog definitions, and few-shot examples for Gemini.</li>
+<li><strong>Clean Developer API:</strong> You only provide three domain-specific descriptions: <ul>
+<li><code>role_description</code>: Persona and available tools.</li>
+<li><code>workflow_description</code>: When to respond in plain text vs when to emit A2UI JSON.</li>
+<li><code>ui_description</code>: Design heuristics (e.g. Cards for alerts, Columns for layout).</li>
+</ul>
+</li>
+<li><strong>Standards Compliant:</strong> Automatically enforces the official <code><a2ui-json> ... </a2ui-json></code> protocol tags and top-down component ordering.</li>
+</ol>
+<h2 is-upgraded>Updating <code>main.py</code></h2>
+<p>Open <code>main.py</code> and update it to use <code>A2uiSchemaManager</code>:</p>
+<pre><code language="language-python" class="language-python">import json
+import os
+import re
+from typing import Any, Dict, List, Optional, Tuple, Union
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from google import genai
+from google.genai import types
+
+# Import official A2UI v0.9.1 tools from a2ui-agent-sdk
+from a2ui.basic_catalog.provider import BasicCatalog
+from a2ui.schema.manager import A2uiSchemaManager
+
+from sensors import get_sensor_report
+
+app = FastAPI(title=&#34;Smart Home Assistant (A2UI v0.9.1)&#34;)
+
+# Configure Vertex AI Gemini Client
+PROJECT_ID = os.environ.get(&#34;GOOGLE_CLOUD_PROJECT&#34;) or os.environ.get(&#34;GCP_PROJECT&#34;)
+LOCATION = os.environ.get(&#34;GOOGLE_CLOUD_REGION&#34;, &#34;us-central1&#34;)
+
+client = genai.Client(
+    vertexai=True,
+    project=PROJECT_ID,
+    location=LOCATION,
+)
+
+# Initialize A2UI v0.9.1 Schema Manager with BasicCatalog
+schema_manager = A2uiSchemaManager(
+    version=&#34;0.9.1&#34;,
+    catalogs=[BasicCatalog.get_config(&#34;0.9.1&#34;)],
+)
+
+# Generate the complete system instruction programmatically
+A2UI_SYSTEM_INSTRUCTION = schema_manager.generate_system_prompt(
+    role_description=(
+        &#34;You are an intelligent Smart Home Voice &amp; Telemetry Assistant. &#34;
+        &#34;You monitor IoT home sensors: climate, indoor air quality, smoke detectors, &#34;
+        &#34;security locks, and battery health. &#34;
+        &#34;You have access to the `get_sensor_report` tool to inspect real-time sensor data.&#34;
+    ),
+    workflow_description=(
+        &#34;DECISION RULE FOR OUTPUT FORMAT:\n\n&#34;
+        &#34;1. TEXT-ONLY RESPONSE:\n&#34;
+        &#34;   When the user asks conversational questions, general knowledge, explanations, &#34;
+        &#34;recommendations, or troubleshooting (e.g., &#39;What humidity is ideal for sleep?&#39;, &#34;
+        &#34;&#39;How can I conserve energy with smart thermostats?&#39;):\n&#34;
+        &#34;   -&gt; Respond ONLY in friendly, clear markdown text. Do NOT emit any &lt;a2ui-json&gt; blocks.\n\n&#34;
+        &#34;2. A2UI GENERATIVE UI RESPONSE:\n&#34;
+        &#34;   When the user asks to inspect sensors, check device status, review dashboards, &#34;
+        &#34;or ask &#39;What needs my attention?&#39;:\n&#34;
+        &#34;   -&gt; First provide a short friendly text summary (1-2 sentences). Specifically highlight if any &#34;
+        &#34;device has a critically low battery.\n&#34;
+        &#34;   -&gt; THEN append an A2UI v0.9.1 JSON payload enclosed strictly in `&lt;a2ui-json&gt; ... &lt;/a2ui-json&gt;`.\n&#34;
+        &#34;   The JSON must be a list containing a `createSurface` message followed by an `updateComponents` message &#34;
+        &#34;defining the visual cards for the devices.&#34;
+    ),
+    ui_description=(
+        &#34;Design guidelines for A2UI v0.9.1:\n&#34;
+        &#34;- Use `Card` components for each device or alert grouping.\n&#34;
+        &#34;- Use `Row` and `Column` components to structure layout.\n&#34;
+        &#34;- For `Row`, use camelCase for `justify` (e.g. &#39;spaceBetween&#39;, &#39;center&#39;, &#39;start&#39;, &#39;end&#39;).\n&#34;
+        &#34;- Use `Text` with variant (&#39;h1&#39;, &#39;h2&#39;, &#39;body&#39;, &#39;caption&#39;) for titles and descriptions.\n&#34;
+        &#34;- For devices with low batteries (especially the Hallway Smoke Alarm at 11% and Nursery Monitor at 14%), &#34;
+        &#34;generate prominent alert cards.&#34;
+    ),
+    include_schema=True,
+    include_examples=True,
+)
+
+def parse_a2ui_response(raw_text: str) -&gt; Tuple[str, Optional[Union[List[Dict[str, Any]], Dict[str, Any]]]]:
+    &#34;&#34;&#34;Extracts conversational text and optional A2UI v0.9.1 payload from model response.&#34;&#34;&#34;
+    a2ui_match = re.search(r&#34;&lt;a2ui-json&gt;\s*([\s\S]*?)\s*&lt;/a2ui-json&gt;&#34;, raw_text)
+    if not a2ui_match:
+        a2ui_match = re.search(r&#34;```(?:a2ui|json)\s*\n([\s\S]*?)\n```&#34;, raw_text)
+
+    if a2ui_match:
+        json_content = a2ui_match.group(1).strip()
+        text_before = raw_text[:a2ui_match.start()].strip()
+        text_after = raw_text[a2ui_match.end():].strip()
+        cleaned_text = f&#34;{text_before} {text_after}&#34;.strip()
+
+        try:
+            surface_data = json.loads(json_content)
+            return cleaned_text, surface_data
+        except json.JSONDecodeError:
+            pass
+
+    return raw_text.strip(), None
+</code></pre>
+<h2 is-upgraded>Test the Upgraded Agent Locally</h2>
+<p>Run the application:</p>
+<pre><code language="language-bash" class="language-bash">uvicorn main:app --reload --port 8080
+</code></pre>
+<p>Open Web Preview on port 8080 and test the following queries:</p>
+<h3 is-upgraded>1. Conversational Question</h3>
+<ul>
+<li>Click the chip or type: <strong>&#34;What is a healthy indoor humidity?&#34;</strong></li>
+<li><strong>Observation:</strong> Notice that Gemini returns pure conversational text. It does not output any unnecessary UI cards. The interface stays clean and lightweight!</li>
+</ul>
+<h3 is-upgraded>2. Attention &amp; Low Battery Query</h3>
+<ul>
+<li>Click the chip or type: <strong>&#34;What needs my attention?&#34;</strong></li>
+<li><strong>Observation:</strong> Gemini calls <code>get_sensor_report()</code>, analyzes the telemetry, and identifies that: <ul>
+<li>The <strong>Hallway Smoke &amp; CO Alarm</strong> has a critically low battery (11%).</li>
+<li>The <strong>Nursery Air Quality Monitor</strong> has a low battery warning (14%).</li>
+</ul>
+</li>
+<li>The assistant emits <code><a2ui-json></code> with <code>createSurface</code> and <code>updateComponents</code> defining structured <strong>Alert Cards</strong> featuring prominent critical and warning badges!</li>
+</ul>
+<h3 is-upgraded>3. Full Sensor Dashboard</h3>
+<ul>
+<li>Click the chip or type: <strong>&#34;Show all sensor readings&#34;</strong></li>
+<li><strong>Observation:</strong> The assistant generates a full multi-device report with categorized cards for Climate, Safety &amp; Air Quality, and Security locks.</li>
+</ul>
+<h2 is-upgraded>Redeploy the Upgraded Application to Cloud Run</h2>
+<p>Deploy the updated application to your live Cloud Run service:</p>
+<pre><code language="language-bash" class="language-bash">gcloud run deploy smart-home-a2ui \
+  --source . \
+  --region &#34;${GOOGLE_CLOUD_REGION}&#34; \
+  --allow-unauthenticated \
+  --set-env-vars GOOGLE_CLOUD_PROJECT=&#34;${GOOGLE_CLOUD_PROJECT}&#34;,GOOGLE_CLOUD_REGION=&#34;${GOOGLE_CLOUD_REGION}&#34;
+</code></pre>
+<p>Visit your public Cloud Run URL. Your cloud-deployed agent is now powered by official A2UI v0.9.1!</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Congratulations &amp; Clean Up" duration="3">
+        <h2 is-upgraded>What You Built and Learned</h2>
+<p>Congratulations! You have successfully built and deployed an interactive, agent-driven smart home telemetry application using <strong>A2UI v0.9.1</strong>, <strong><code>a2ui-agent-sdk</code></strong>, <strong>Gemini 3.8 Flash</strong> on <strong>Vertex AI</strong>, and <strong>Google Cloud Run</strong>.</p>
+<p>Here is a summary of what you accomplished:</p>
+<ol type="1">
+<li><strong>A2UI v0.9.1 Specification:</strong> Learned the prompt-first architecture, <code>createSurface</code>, <code>updateComponents</code>, and standard primitives in <code>BasicCatalog</code>.</li>
+<li><strong>Schema-Driven System Prompts:</strong> Used <code>A2uiSchemaManager.generate_system_prompt()</code> from <code>a2ui-agent-sdk</code> to programmatically generate prompts instead of maintaining custom text blobs.</li>
+<li><strong>Function Calling with Vertex AI:</strong> Integrated the <code>google-genai</code> Python SDK with <code>gemini-3.8-flash</code> on Vertex AI to inspect live IoT sensor telemetry.</li>
+<li><strong>Attention Detection:</strong> Built an experience where prompts like <em>&#34;What needs my attention?&#34;</em> surface actionable warning cards for low-battery devices.</li>
+<li><strong>Zero-Build Web Component Rendering:</strong> Embedded <code>&lt;a2ui-surface&gt;</code> into the chat client using modern browser ES modules with zero build steps or bundlers.</li>
+<li><strong>Serverless Cloud Deployment:</strong> Deployed the solution to Google Cloud Run with IAM service account permissions configured for Vertex AI.</li>
+</ol>
+<h2 is-upgraded>Clean Up Resources</h2>
+<p>To avoid incurring ongoing Google Cloud charges for Cloud Run and Artifact Registry container images, delete the deployed service:</p>
+<pre><code language="language-bash" class="language-bash"># Delete the Cloud Run service
+gcloud run services delete smart-home-a2ui \
+  --region &#34;${GOOGLE_CLOUD_REGION}&#34; \
+  --quiet
+</code></pre>
+<h2 is-upgraded>Next Steps &amp; Resources</h2>
+<ul>
+<li>Explore the official <a href="https://github.com/a2ui-project/a2ui" target="_blank">A2UI Project Repository</a> for specifications, Lit/React renderers, and standard component catalogs.</li>
+<li>Read the <a href="https://raw.githubusercontent.com/a2ui-project/a2ui/main/docs/public/specification/v0.9.1-a2ui.md" target="_blank">A2UI v0.9.1 Specification</a>.</li>
+<li>Read the <a href="https://cloud.google.com/vertex-ai/generative-ai/docs/learn/overview" target="_blank">Gemini on Vertex AI Documentation</a> to explore function calling, multimodal inputs, and streaming responses.</li>
+<li>Check out <a href="https://cloud.google.com/run/docs" target="_blank">Google Cloud Run Documentation</a> for scaling, custom domains, and concurrency optimizations.</li>
+</ul>
+
+
+      </google-codelab-step>
+    
+  </google-codelab>
+
+  <script src="./claat-public/native-shim.js"></script>
+  <script src="./claat-public/custom-elements.min.js"></script>
+  <script src="./claat-public/prettify.js"></script>
+  <script src="./claat-public/codelab-elements.js"></script>
+  <script src="//support.google.com/inapp/api.js"></script>
+
+</body>
+</html>

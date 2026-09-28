@@ -1,0 +1,510 @@
+
+
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+  <title>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Code+Pro:400|Roboto:400,300,400italic,500,700|Roboto+Mono">
+  <link rel="stylesheet" href=".styles/codelab.css">
+  <style>
+    html {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+    }
+  </style>
+</head>
+
+<body class="codelab-takeover">
+  <div class="codelab__toc">
+    <a href="index.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">1</span>
+      <span class="toc-item__title">Introduction</span>
+    </a>
+    <a href="step-2.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">2</span>
+      <span class="toc-item__title">Environment &amp; Vertex AI Setup</span>
+    </a>
+    <a href="step-3.html" class="toc-item toc-item--current">
+      <span class="toc-item__index">3</span>
+      <span class="toc-item__title">Building the Baseline Smart Home Agent</span>
+    </a>
+    <a href="step-4.html" class="toc-item">
+      <span class="toc-item__index">4</span>
+      <span class="toc-item__title">Deploying the Baseline to Cloud Run</span>
+    </a>
+    <a href="step-5.html" class="toc-item">
+      <span class="toc-item__index">5</span>
+      <span class="toc-item__title">Integrating the A2UI Client Renderer</span>
+    </a>
+    <a href="step-6.html" class="toc-item">
+      <span class="toc-item__index">6</span>
+      <span class="toc-item__title">Teaching Gemini A2UI (Prompt-First Catalog)</span>
+    </a>
+    <a href="step-7.html" class="toc-item">
+      <span class="toc-item__index">7</span>
+      <span class="toc-item__title">Adding Two-Way Interactivity &amp; Redeploying</span>
+    </a>
+    <a href="step-8.html" class="toc-item">
+      <span class="toc-item__index">8</span>
+      <span class="toc-item__title">Congratulations &amp; Clean Up</span>
+    </a>
+  </div>
+
+  <div class="codelab__step">
+
+    <div class="step__header">
+      <a href="step-2.html">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0 0h24v24H0z" fill="none"/>
+          <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+        </svg>
+      </a>
+
+      <a href=".index.html" title="Return to home page">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+          <path d="M0 0h24v24H0z" fill="none"/>
+        </svg>
+      </a>
+
+      <a href="step-4.html">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0 0h24v24H0z" fill="none"/>
+          <path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/>
+        </svg>
+      </a>
+
+      <h1>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</h1>
+    </div>
+
+    <div class="step__body">
+      <h1>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</h1>
+      <h2>3. Building the Baseline Smart Home Agent</h2>
+      <div><p>Before introducing A2UI, you will build a functional baseline: a Python FastAPI server running <code>gemini-3.8-flash</code> that interacts with a simulated smart home in memory and serves a simple web chat interface.</p><h2>Create the Backend (<code>main.py</code>)</h2><p>In <code>~/a2ui-codelab/01-baseline</code>, create <code>main.py</code>:</p><pre><code language="language-bash" class="language-bash">cat &lt;&lt; &#39;EOF&#39; &gt; main.py
+import os
+from typing import List, Optional
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from google import genai
+from google.genai import types
+
+app = FastAPI(title=&#34;Smart Home Assistant (Baseline)&#34;)
+
+# In-memory device state for home automation
+SMART_HOME_STATE = {
+    &#34;thermostat&#34;: {
+        &#34;location&#34;: &#34;Living Room&#34;,
+        &#34;current_temperature&#34;: 71,
+        &#34;target_temperature&#34;: 72,
+        &#34;humidity&#34;: 45,
+        &#34;mode&#34;: &#34;heat&#34;,
+        &#34;battery&#34;: 92,
+    },
+    &#34;lights&#34;: {
+        &#34;living_room&#34;: {&#34;name&#34;: &#34;Living Room Ceiling&#34;, &#34;state&#34;: &#34;on&#34;, &#34;brightness&#34;: 80},
+        &#34;kitchen&#34;: {&#34;name&#34;: &#34;Kitchen Pendant&#34;, &#34;state&#34;: &#34;off&#34;, &#34;brightness&#34;: 0},
+        &#34;bedroom&#34;: {&#34;name&#34;: &#34;Bedroom Lamp&#34;, &#34;state&#34;: &#34;on&#34;, &#34;brightness&#34;: 50},
+    },
+    &#34;air_quality&#34;: {
+        &#34;location&#34;: &#34;Nursery&#34;,
+        &#34;co2&#34;: 540,
+        &#34;status&#34;: &#34;Good&#34;,
+        &#34;humidity&#34;: 48,
+        &#34;battery&#34;: 85,
+    },
+    &#34;security&#34;: {
+        &#34;front_door&#34;: {&#34;name&#34;: &#34;Front Door Lock&#34;, &#34;state&#34;: &#34;locked&#34;, &#34;battery&#34;: 94},
+        &#34;garage&#34;: {&#34;name&#34;: &#34;Garage Door&#34;, &#34;state&#34;: &#34;closed&#34;, &#34;battery&#34;: 90},
+    },
+}
+
+# Python functions exposed as tools for Gemini
+def get_device_status() -&gt; dict:
+    &#34;&#34;&#34;Retrieves the current real-time status of all smart home devices including thermostat, lights, air quality, and security.&#34;&#34;&#34;
+    return SMART_HOME_STATE
+
+def set_thermostat(temperature: int, mode: str = &#34;heat&#34;) -&gt; str:
+    &#34;&#34;&#34;Sets the thermostat target temperature (in Fahrenheit) and operating mode (heat, cool, eco, off).&#34;&#34;&#34;
+    SMART_HOME_STATE[&#34;thermostat&#34;][&#34;target_temperature&#34;] = temperature
+    SMART_HOME_STATE[&#34;thermostat&#34;][&#34;mode&#34;] = mode
+    return f&#34;Thermostat target set to {temperature}°F in {mode} mode.&#34;
+
+def set_light(room: str, state: str, brightness: int = 100) -&gt; str:
+    &#34;&#34;&#34;Controls a light. Room must be &#39;living_room&#39;, &#39;kitchen&#39;, or &#39;bedroom&#39;. State must be &#39;on&#39; or &#39;off&#39;. Brightness is 0-100.&#34;&#34;&#34;
+    if room not in SMART_HOME_STATE[&#34;lights&#34;]:
+        return f&#34;Unknown room &#39;{room}&#39;. Valid rooms: {list(SMART_HOME_STATE[&#39;lights&#39;].keys())}&#34;
+    SMART_HOME_STATE[&#34;lights&#34;][room][&#34;state&#34;] = state
+    SMART_HOME_STATE[&#34;lights&#34;][room][&#34;brightness&#34;] = brightness if state == &#34;on&#34; else 0
+    return f&#34;{SMART_HOME_STATE[&#39;lights&#39;][room][&#39;name&#39;]} turned {state} (brightness {brightness}%).&#34;
+
+def set_door_lock(device: str, state: str) -&gt; str:
+    &#34;&#34;&#34;Controls locks or doors. Device must be &#39;front_door&#39; or &#39;garage&#39;. State must be &#39;locked&#39;, &#39;unlocked&#39;, &#39;closed&#39;, or &#39;open&#39;.&#34;&#34;&#34;
+    if device not in SMART_HOME_STATE[&#34;security&#34;]:
+        return f&#34;Unknown security device &#39;{device}&#39;.&#34;
+    SMART_HOME_STATE[&#34;security&#34;][device][&#34;state&#34;] = state
+    return f&#34;{SMART_HOME_STATE[&#39;security&#39;][device][&#39;name&#39;]} is now {state}.&#34;
+
+# Configure Vertex AI Gemini client
+PROJECT_ID = os.environ.get(&#34;GOOGLE_CLOUD_PROJECT&#34;) or os.environ.get(&#34;GCP_PROJECT&#34;)
+LOCATION = os.environ.get(&#34;GOOGLE_CLOUD_REGION&#34;, &#34;us-central1&#34;)
+
+client = genai.Client(
+    vertexai=True,
+    project=PROJECT_ID,
+    location=LOCATION,
+)
+
+SYSTEM_INSTRUCTION = &#34;&#34;&#34;You are a helpful Smart Home Voice &amp; Chat Assistant.
+You help users monitor and control their smart home devices: thermostat, lights, air quality sensors, and door locks.
+You have access to tools to read the device status and modify device settings.
+Always provide clear, friendly responses. When summarizing device status or changes, present the details clearly in text.
+If the user asks questions unrelated to home devices (such as energy tips or comfort advice), answer naturally and helpfully.
+&#34;&#34;&#34;
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class ChatRequest(BaseModel):
+    message: str
+    history: Optional[List[ChatMessage]] = None
+
+class ChatResponse(BaseModel):
+    response: str
+
+@app.post(&#34;/api/chat&#34;, response_model=ChatResponse)
+async def chat_endpoint(req: ChatRequest):
+    try:
+        contents = []
+        if req.history:
+            for msg in req.history:
+                contents.append(types.Content(
+                    role=msg.role,
+                    parts=[types.Part.from_text(text=msg.content)]
+                ))
+        contents.append(types.Content(
+            role=&#34;user&#34;,
+            parts=[types.Part.from_text(text=req.message)]
+        ))
+
+        config = types.GenerateContentConfig(
+            system_instruction=SYSTEM_INSTRUCTION,
+            temperature=0.4,
+            tools=[get_device_status, set_thermostat, set_light, set_door_lock],
+        )
+
+        response = client.models.generate_content(
+            model=&#34;gemini-3.8-flash&#34;,
+            contents=contents,
+            config=config,
+        )
+
+        return ChatResponse(response=response.text or &#34;Command executed.&#34;)
+    except Exception as e:
+        print(f&#34;Error calling Gemini: {e}&#34;)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get(&#34;/api/devices&#34;)
+async def get_devices():
+    return SMART_HOME_STATE
+
+# Mount static frontend
+static_dir = os.path.join(os.path.dirname(__file__), &#34;static&#34;)
+if os.path.exists(static_dir):
+    app.mount(&#34;/static&#34;, StaticFiles(directory=static_dir), name=&#34;static&#34;)
+
+@app.get(&#34;/&#34;)
+async def root():
+    index_file = os.path.join(static_dir, &#34;index.html&#34;)
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+    return {&#34;message&#34;: &#34;Smart Home Assistant API is running.&#34;}
+
+if __name__ == &#34;__main__&#34;:
+    import uvicorn
+    port = int(os.environ.get(&#34;PORT&#34;, 8080))
+    uvicorn.run(&#34;main:app&#34;, host=&#34;0.0.0.0&#34;, port=port, reload=True)
+EOF
+</code></pre><h2>Create the Frontend Assets</h2><p>Create a directory named <code>static</code>:</p><pre><code language="language-bash" class="language-bash">mkdir -p static
+</code></pre><p>Create <code>static/styles.css</code>:</p><pre><code language="language-bash" class="language-bash">cat &lt;&lt; &#39;EOF&#39; &gt; static/styles.css
+:root {
+  --primary-color: #1a73e8;
+  --primary-hover: #1557b0;
+  --bg-color: #f8f9fa;
+  --card-bg: #ffffff;
+  --text-primary: #202124;
+  --text-secondary: #5f6368;
+  --border-color: #dadce0;
+  --user-bubble: #e8f0fe;
+  --user-text: #174ea6;
+  --bot-bubble: #ffffff;
+  --bot-text: #202124;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, &#34;Segoe UI&#34;, Roboto, Arial, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  background-color: #ffffff;
+  border-bottom: 1px solid var(--border-color);
+  padding: 1rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header-title { display: flex; align-items: center; gap: 0.75rem; }
+.header-title h1 { font-size: 1.25rem; font-weight: 600; }
+.badge {
+  background-color: #e8f0fe;
+  color: var(--primary-color);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+}
+
+.chat-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 800px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.message-wrapper { display: flex; flex-direction: column; max-width: 75%; }
+.message-wrapper.user { align-self: flex-end; }
+.message-wrapper.assistant { align-self: flex-start; }
+
+.message-sender { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.25rem; padding: 0 0.5rem; }
+.message-bubble {
+  padding: 0.85rem 1.15rem;
+  border-radius: 18px;
+  line-height: 1.5;
+  font-size: 0.95rem;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.message-wrapper.user .message-bubble {
+  background-color: var(--user-bubble);
+  color: var(--user-text);
+  border-bottom-right-radius: 4px;
+}
+
+.message-wrapper.assistant .message-bubble {
+  background-color: var(--bot-bubble);
+  color: var(--bot-text);
+  border: 1px solid var(--border-color);
+  border-bottom-left-radius: 4px;
+}
+
+.composer-container {
+  background-color: #ffffff;
+  border-top: 1px solid var(--border-color);
+  padding: 1rem 1.5rem;
+}
+
+.composer-form { display: flex; gap: 0.75rem; max-width: 800px; margin: 0 auto; }
+.composer-input {
+  flex: 1;
+  padding: 0.85rem 1.25rem;
+  border: 1px solid var(--border-color);
+  border-radius: 24px;
+  font-size: 0.95rem;
+  outline: none;
+}
+.composer-input:focus { border-color: var(--primary-color); }
+.composer-button {
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 24px;
+  padding: 0.85rem 1.5rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.quick-prompts {
+  display: flex;
+  gap: 0.5rem;
+  max-width: 800px;
+  margin: 0.5rem auto 0;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.quick-chip {
+  background-color: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+EOF
+</code></pre><p>Create <code>static/index.html</code>:</p><pre><code language="language-bash" class="language-bash">cat &lt;&lt; &#39;EOF&#39; &gt; static/index.html
+&lt;!DOCTYPE html&gt;
+&lt;html lang=&#34;en&#34;&gt;
+&lt;head&gt;
+  &lt;meta charset=&#34;UTF-8&#34;&gt;
+  &lt;meta name=&#34;viewport&#34; content=&#34;width=device-width, initial-scale=1.0&#34;&gt;
+  &lt;title&gt;Smart Home Assistant (Baseline)&lt;/title&gt;
+  &lt;link rel=&#34;stylesheet&#34; href=&#34;/static/styles.css&#34;&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;header&gt;
+    &lt;div class=&#34;header-title&#34;&gt;
+      &lt;h1&gt;Smart Home Assistant&lt;/h1&gt;
+      &lt;span class=&#34;badge&#34;&gt;Baseline: Text-Only&lt;/span&gt;
+    &lt;/div&gt;
+  &lt;/header&gt;
+
+  &lt;main class=&#34;chat-container&#34; id=&#34;chatContainer&#34;&gt;
+    &lt;div class=&#34;message-wrapper assistant&#34;&gt;
+      &lt;div class=&#34;message-sender&#34;&gt;Gemini Assistant&lt;/div&gt;
+      &lt;div class=&#34;message-bubble&#34;&gt;Hello! I am your Smart Home Assistant. I can monitor your smart devices and adjust settings. Try asking &#34;Show all device statuses&#34; or &#34;Turn off the kitchen lights&#34;.&lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/main&gt;
+
+  &lt;footer class=&#34;composer-container&#34;&gt;
+    &lt;div class=&#34;quick-prompts&#34;&gt;
+      &lt;button class=&#34;quick-chip&#34; onclick=&#34;sendQuickPrompt(&#39;Show all device statuses&#39;)&#34;&gt;📊 Show all device statuses&lt;/button&gt;
+      &lt;button class=&#34;quick-chip&#34; onclick=&#34;sendQuickPrompt(&#39;Turn off the living room light&#39;)&#34;&gt;💡 Turn off living room light&lt;/button&gt;
+      &lt;button class=&#34;quick-chip&#34; onclick=&#34;sendQuickPrompt(&#39;Set thermostat to 70&#39;)&#34;&gt;🌡️ Set thermostat to 70°F&lt;/button&gt;
+      &lt;button class=&#34;quick-chip&#34; onclick=&#34;sendQuickPrompt(&#39;What is a healthy indoor humidity?&#39;)&#34;&gt;❓ Healthy indoor humidity?&lt;/button&gt;
+    &lt;/div&gt;
+    &lt;form class=&#34;composer-form&#34; id=&#34;chatForm&#34;&gt;
+      &lt;input type=&#34;text&#34; id=&#34;userInput&#34; class=&#34;composer-input&#34; placeholder=&#34;Ask about devices or give a command...&#34; autocomplete=&#34;off&#34; required&gt;
+      &lt;button type=&#34;submit&#34; id=&#34;sendBtn&#34; class=&#34;composer-button&#34;&gt;Send&lt;/button&gt;
+    &lt;/form&gt;
+  &lt;/footer&gt;
+
+  &lt;script&gt;
+    const chatContainer = document.getElementById(&#39;chatContainer&#39;);
+    const chatForm = document.getElementById(&#39;chatForm&#39;);
+    const userInput = document.getElementById(&#39;userInput&#39;);
+    const sendBtn = document.getElementById(&#39;sendBtn&#39;);
+    const history = [];
+
+    function appendMessage(role, text) {
+      const wrapper = document.createElement(&#39;div&#39;);
+      wrapper.className = `message-wrapper ${role}`;
+
+      const sender = document.createElement(&#39;div&#39;);
+      sender.className = &#39;message-sender&#39;;
+      sender.textContent = role === &#39;user&#39; ? &#39;You&#39; : &#39;Gemini Assistant&#39;;
+
+      const bubble = document.createElement(&#39;div&#39;);
+      bubble.className = &#39;message-bubble&#39;;
+      bubble.textContent = text;
+
+      wrapper.appendChild(sender);
+      wrapper.appendChild(bubble);
+      chatContainer.appendChild(wrapper);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+      return bubble;
+    }
+
+    async function handleSendMessage(messageText) {
+      if (!messageText.trim()) return;
+
+      appendMessage(&#39;user&#39;, messageText);
+      history.push({ role: &#39;user&#39;, content: messageText });
+      userInput.value = &#39;&#39;;
+      sendBtn.disabled = true;
+
+      const loadingBubble = appendMessage(&#39;assistant&#39;, &#39;Thinking...&#39;);
+
+      try {
+        const response = await fetch(&#39;/api/chat&#39;, {
+          method: &#39;POST&#39;,
+          headers: { &#39;Content-Type&#39;: &#39;application/json&#39; },
+          body: JSON.stringify({ message: messageText, history: history.slice(0, -1) })
+        });
+
+        if (!response.ok) {
+          const err = await response.json().catch(() =&gt; ({ detail: &#39;Network error&#39; }));
+          throw new Error(err.detail || `Server error ${response.status}`);
+        }
+
+        const data = await response.json();
+        loadingBubble.textContent = data.response;
+        history.push({ role: &#39;model&#39;, content: data.response });
+      } catch (err) {
+        loadingBubble.textContent = `⚠️ Error: ${err.message}`;
+      } finally {
+        sendBtn.disabled = false;
+        userInput.focus();
+      }
+    }
+
+    chatForm.addEventListener(&#39;submit&#39;, (e) =&gt; {
+      e.preventDefault();
+      handleSendMessage(userInput.value);
+    });
+
+    function sendQuickPrompt(text) {
+      userInput.value = text;
+      handleSendMessage(text);
+    }
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+EOF
+</code></pre><h2>Test the Baseline Locally</h2><p>Start the application using <code>uvicorn</code>:</p><pre><code language="language-bash" class="language-bash">uvicorn main:app --host 0.0.0.0 --port 8080
+</code></pre><p>In Google Cloud Shell, click the <strong>Web Preview</strong> icon (eye icon in the top right) and select <strong>Preview on port 8080</strong>.</p><p>Try the following interactions:</p><ul type="1"><li>Click <strong>&#34;❓ Healthy indoor humidity?&#34;</strong><ul><li>The model responds with informative conversational text.</li></ul></li><li>Click <strong>&#34;📊 Show all device statuses&#34;</strong><ul><li>The model calls <code>get_device_status</code> and outputs a long, bulleted text summary of all devices.</li></ul></li></ul><div class="step__note note--warning"><p><strong>Friction Alert:</strong> When inspecting multiple devices, reading paragraphs of text is tedious. If you want to change the temperature or turn off a light, you have to type another command. There are no toggles, no sliders, and no visual indicators. </p></div><p>Stop the server in the terminal with <code>Ctrl+C</code>.</p></div>
+    </div>
+
+  </div>
+
+  <script>
+    (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+    })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+    ga('create', 'UA-49880327-14', 'auto');
+
+    (function() {
+      var gaCodelab = '';
+      if (gaCodelab) {
+        ga('create', gaCodelab, 'auto', {name: 'codelab'});
+      }
+
+      var gaView;
+      var parts = location.search.substring(1).split('&');
+      for (var i = 0; i < parts.length; i++) {
+        var param = parts[i].split('=');
+        if (param[0] === 'viewga') {
+          gaView = param[1];
+          break;
+        }
+      }
+      if (gaView && gaView !== gaCodelab) {
+        ga('create', gaView, 'auto', {name: 'view'});
+      }
+    })();
+  </script>
+  <script src=".scripts/codelab.js" async></script>
+</body>
+</html>

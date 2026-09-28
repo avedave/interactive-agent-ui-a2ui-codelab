@@ -1,0 +1,617 @@
+
+
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+  <title>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Code+Pro:400|Roboto:400,300,400italic,500,700|Roboto+Mono">
+  <link rel="stylesheet" href=".styles/codelab.css">
+  <style>
+    html {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+    }
+  </style>
+</head>
+
+<body class="codelab-takeover">
+  <div class="codelab__toc">
+    <a href="index.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">1</span>
+      <span class="toc-item__title">Introduction</span>
+    </a>
+    <a href="step-2.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">2</span>
+      <span class="toc-item__title">Environment &amp; Vertex AI Setup</span>
+    </a>
+    <a href="step-3.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">3</span>
+      <span class="toc-item__title">Building the Baseline Smart Home Agent</span>
+    </a>
+    <a href="step-4.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">4</span>
+      <span class="toc-item__title">Deploying the Baseline to Cloud Run</span>
+    </a>
+    <a href="step-5.html" class="toc-item toc-item--complete">
+      <span class="toc-item__index">5</span>
+      <span class="toc-item__title">Integrating the A2UI Client Renderer</span>
+    </a>
+    <a href="step-6.html" class="toc-item toc-item--current">
+      <span class="toc-item__index">6</span>
+      <span class="toc-item__title">Teaching Gemini A2UI (Prompt-First Catalog)</span>
+    </a>
+    <a href="step-7.html" class="toc-item">
+      <span class="toc-item__index">7</span>
+      <span class="toc-item__title">Adding Two-Way Interactivity &amp; Redeploying</span>
+    </a>
+    <a href="step-8.html" class="toc-item">
+      <span class="toc-item__index">8</span>
+      <span class="toc-item__title">Congratulations &amp; Clean Up</span>
+    </a>
+  </div>
+
+  <div class="codelab__step">
+
+    <div class="step__header">
+      <a href="step-5.html">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0 0h24v24H0z" fill="none"/>
+          <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+        </svg>
+      </a>
+
+      <a href=".index.html" title="Return to home page">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+          <path d="M0 0h24v24H0z" fill="none"/>
+        </svg>
+      </a>
+
+      <a href="step-7.html">
+        <svg fill="#FFFFFF" height="24" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M0 0h24v24H0z" fill="none"/>
+          <path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/>
+        </svg>
+      </a>
+
+      <h1>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</h1>
+    </div>
+
+    <div class="step__body">
+      <h1>Build Interactive Agent Interfaces with A2UI, Gemini, and Cloud Run</h1>
+      <h2>6. Teaching Gemini A2UI (Prompt-First Catalog)</h2>
+      <div><p>In this step, you will update the backend agent to generate declarative A2UI components using the <strong>Prompt-First</strong> technique.</p><h2>How Prompt-First A2UI Works</h2><p>Instead of hardcoding frontend components or relying on custom SDKs, we teach Gemini the <strong>A2UI Home Automation Catalog</strong> directly in the system instructions. We instruct the model to follow a clear decision policy:</p><ul type="1"><li><strong>Conversational queries</strong> (e.g. &#34;What humidity is ideal for sleep?&#34;): The model responds in friendly Markdown text.</li><li><strong>Device status and control requests</strong> (e.g. &#34;Show me my dashboard&#34; or &#34;What&#39;s the status of the house?&#34;): The model outputs a brief natural language greeting followed by an A2UI declarative JSON block defining the view tree.</li></ul><h2>Updating <code>main.py</code></h2><p>In <code>~/a2ui-codelab/02-a2ui</code>, create <code>main.py</code>:</p><pre><code language="language-bash" class="language-bash">cat &lt;&lt; &#39;EOF&#39; &gt; main.py
+import json
+import os
+import re
+from typing import Any, Dict, List, Optional, Tuple
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from google import genai
+from google.genai import types
+
+app = FastAPI(title=&#34;Smart Home Assistant with A2UI&#34;)
+
+# Live in-memory smart home device state
+SMART_HOME_STATE = {
+    &#34;thermostat&#34;: {
+        &#34;location&#34;: &#34;Living Room&#34;,
+        &#34;current_temperature&#34;: 71,
+        &#34;target_temperature&#34;: 72,
+        &#34;humidity&#34;: 45,
+        &#34;mode&#34;: &#34;heat&#34;,
+        &#34;battery&#34;: 92,
+    },
+    &#34;lights&#34;: {
+        &#34;living_room&#34;: {&#34;name&#34;: &#34;Living Room Ceiling&#34;, &#34;state&#34;: &#34;on&#34;, &#34;brightness&#34;: 80},
+        &#34;kitchen&#34;: {&#34;name&#34;: &#34;Kitchen Pendant&#34;, &#34;state&#34;: &#34;off&#34;, &#34;brightness&#34;: 0},
+        &#34;bedroom&#34;: {&#34;name&#34;: &#34;Bedroom Lamp&#34;, &#34;state&#34;: &#34;on&#34;, &#34;brightness&#34;: 50},
+    },
+    &#34;air_quality&#34;: {
+        &#34;location&#34;: &#34;Nursery&#34;,
+        &#34;co2&#34;: 540,
+        &#34;status&#34;: &#34;Good&#34;,
+        &#34;humidity&#34;: 48,
+        &#34;battery&#34;: 85,
+    },
+    &#34;security&#34;: {
+        &#34;front_door&#34;: {&#34;name&#34;: &#34;Front Door Lock&#34;, &#34;state&#34;: &#34;locked&#34;, &#34;battery&#34;: 94},
+        &#34;garage&#34;: {&#34;name&#34;: &#34;Garage Door&#34;, &#34;state&#34;: &#34;closed&#34;, &#34;battery&#34;: 90},
+    },
+}
+
+def build_a2ui_dashboard_surface(surface_id: str = &#34;home-dashboard&#34;) -&gt; Dict[str, Any]:
+    &#34;&#34;&#34;Generates the standard declarative A2UI component tree for the smart home dashboard.&#34;&#34;&#34;
+    therm = SMART_HOME_STATE[&#34;thermostat&#34;]
+    lights = SMART_HOME_STATE[&#34;lights&#34;]
+    air = SMART_HOME_STATE[&#34;air_quality&#34;]
+    sec = SMART_HOME_STATE[&#34;security&#34;]
+
+    components = [
+        # Root layout
+        {
+            &#34;id&#34;: &#34;root-container&#34;,
+            &#34;component&#34;: &#34;Column&#34;,
+            &#34;children&#34;: [&#34;header-row&#34;, &#34;thermostat-card&#34;, &#34;lights-card&#34;, &#34;air-card&#34;, &#34;security-card&#34;]
+        },
+        # Header
+        {
+            &#34;id&#34;: &#34;header-row&#34;,
+            &#34;component&#34;: &#34;Row&#34;,
+            &#34;properties&#34;: {&#34;alignment&#34;: &#34;space-between&#34;},
+            &#34;children&#34;: [&#34;dash-title&#34;, &#34;dash-badge&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;dash-title&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: &#34;🏠 Home Automation Dashboard&#34;, &#34;variant&#34;: &#34;title&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;dash-badge&#34;,
+            &#34;component&#34;: &#34;StatusBadge&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: &#34;All Systems Normal&#34;, &#34;status&#34;: &#34;active&#34;}
+        },
+
+        # Thermostat Card
+        {
+            &#34;id&#34;: &#34;thermostat-card&#34;,
+            &#34;component&#34;: &#34;Card&#34;,
+            &#34;children&#34;: [&#34;therm-header&#34;, &#34;therm-details&#34;, &#34;therm-controls&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;therm-header&#34;,
+            &#34;component&#34;: &#34;Row&#34;,
+            &#34;properties&#34;: {&#34;alignment&#34;: &#34;space-between&#34;},
+            &#34;children&#34;: [&#34;therm-title&#34;, &#34;therm-mode-badge&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;therm-title&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;🌡️ {therm[&#39;location&#39;]} Thermostat&#34;, &#34;variant&#34;: &#34;subtitle&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;therm-mode-badge&#34;,
+            &#34;component&#34;: &#34;StatusBadge&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;Mode: {therm[&#39;mode&#39;].upper()}&#34;, &#34;status&#34;: &#34;normal&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;therm-details&#34;,
+            &#34;component&#34;: &#34;Row&#34;,
+            &#34;properties&#34;: {&#34;alignment&#34;: &#34;start&#34;},
+            &#34;children&#34;: [&#34;therm-temp-text&#34;, &#34;therm-target-text&#34;, &#34;therm-humid-text&#34;, &#34;therm-battery-text&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;therm-temp-text&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;Current: {therm[&#39;current_temperature&#39;]}°F  |  &#34;, &#34;variant&#34;: &#34;body&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;therm-target-text&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;Target: {therm[&#39;target_temperature&#39;]}°F  |  &#34;, &#34;variant&#34;: &#34;body&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;therm-humid-text&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;Humidity: {therm[&#39;humidity&#39;]}%  |  &#34;, &#34;variant&#34;: &#34;body&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;therm-battery-text&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;Battery: {therm[&#39;battery&#39;]}%&#34;, &#34;variant&#34;: &#34;caption&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;therm-controls&#34;,
+            &#34;component&#34;: &#34;Row&#34;,
+            &#34;properties&#34;: {&#34;alignment&#34;: &#34;start&#34;},
+            &#34;children&#34;: [&#34;therm-btn-down&#34;, &#34;therm-btn-up&#34;, &#34;therm-btn-eco&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;therm-btn-down&#34;,
+            &#34;component&#34;: &#34;Button&#34;,
+            &#34;properties&#34;: {
+                &#34;label&#34;: f&#34;Cooler ({therm[&#39;target_temperature&#39;] - 1}°F)&#34;,
+                &#34;variant&#34;: &#34;outlined&#34;,
+                &#34;action&#34;: {&#34;name&#34;: &#34;set_thermostat&#34;, &#34;parameters&#34;: {&#34;temperature&#34;: therm[&#39;target_temperature&#39;] - 1, &#34;mode&#34;: therm[&#39;mode&#39;]}}
+            }
+        },
+        {
+            &#34;id&#34;: &#34;therm-btn-up&#34;,
+            &#34;component&#34;: &#34;Button&#34;,
+            &#34;properties&#34;: {
+                &#34;label&#34;: f&#34;Warmer ({therm[&#39;target_temperature&#39;] + 1}°F)&#34;,
+                &#34;variant&#34;: &#34;outlined&#34;,
+                &#34;action&#34;: {&#34;name&#34;: &#34;set_thermostat&#34;, &#34;parameters&#34;: {&#34;temperature&#34;: therm[&#39;target_temperature&#39;] + 1, &#34;mode&#34;: therm[&#39;mode&#39;]}}
+            }
+        },
+        {
+            &#34;id&#34;: &#34;therm-btn-eco&#34;,
+            &#34;component&#34;: &#34;Button&#34;,
+            &#34;properties&#34;: {
+                &#34;label&#34;: &#34;Set Eco Mode (68°F)&#34;,
+                &#34;variant&#34;: &#34;tonal&#34;,
+                &#34;action&#34;: {&#34;name&#34;: &#34;set_thermostat&#34;, &#34;parameters&#34;: {&#34;temperature&#34;: 68, &#34;mode&#34;: &#34;eco&#34;}}
+            }
+        },
+
+        # Lights Card
+        {
+            &#34;id&#34;: &#34;lights-card&#34;,
+            &#34;component&#34;: &#34;Card&#34;,
+            &#34;children&#34;: [&#34;lights-title&#34;, &#34;light-row-lr&#34;, &#34;light-row-kitch&#34;, &#34;light-row-bed&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;lights-title&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: &#34;💡 Smart Lighting Controls&#34;, &#34;variant&#34;: &#34;subtitle&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;light-row-lr&#34;,
+            &#34;component&#34;: &#34;Row&#34;,
+            &#34;properties&#34;: {&#34;alignment&#34;: &#34;space-between&#34;},
+            &#34;children&#34;: [&#34;light-text-lr&#34;, &#34;light-btn-lr&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;light-text-lr&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;{lights[&#39;living_room&#39;][&#39;name&#39;]}: {lights[&#39;living_room&#39;][&#39;state&#39;].upper()} ({lights[&#39;living_room&#39;][&#39;brightness&#39;]}%)&#34;, &#34;variant&#34;: &#34;body&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;light-btn-lr&#34;,
+            &#34;component&#34;: &#34;Button&#34;,
+            &#34;properties&#34;: {
+                &#34;label&#34;: &#34;Turn OFF&#34; if lights[&#39;living_room&#39;][&#39;state&#39;] == &#39;on&#39; else &#34;Turn ON&#34;,
+                &#34;variant&#34;: &#34;filled&#34; if lights[&#39;living_room&#39;][&#39;state&#39;] == &#39;on&#39; else &#34;outlined&#34;,
+                &#34;action&#34;: {&#34;name&#34;: &#34;set_light&#34;, &#34;parameters&#34;: {&#34;room&#34;: &#34;living_room&#34;, &#34;state&#34;: &#34;off&#34; if lights[&#39;living_room&#39;][&#39;state&#39;] == &#39;on&#39; else &#34;on&#34;}}
+            }
+        },
+        {
+            &#34;id&#34;: &#34;light-row-kitch&#34;,
+            &#34;component&#34;: &#34;Row&#34;,
+            &#34;properties&#34;: {&#34;alignment&#34;: &#34;space-between&#34;},
+            &#34;children&#34;: [&#34;light-text-kitch&#34;, &#34;light-btn-kitch&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;light-text-kitch&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;{lights[&#39;kitchen&#39;][&#39;name&#39;]}: {lights[&#39;kitchen&#39;][&#39;state&#39;].upper()} ({lights[&#39;kitchen&#39;][&#39;brightness&#39;]}%)&#34;, &#34;variant&#34;: &#34;body&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;light-btn-kitch&#34;,
+            &#34;component&#34;: &#34;Button&#34;,
+            &#34;properties&#34;: {
+                &#34;label&#34;: &#34;Turn OFF&#34; if lights[&#39;kitchen&#39;][&#39;state&#39;] == &#39;on&#39; else &#34;Turn ON&#34;,
+                &#34;variant&#34;: &#34;filled&#34; if lights[&#39;kitchen&#39;][&#39;state&#39;] == &#39;on&#39; else &#34;outlined&#34;,
+                &#34;action&#34;: {&#34;name&#34;: &#34;set_light&#34;, &#34;parameters&#34;: {&#34;room&#34;: &#34;kitchen&#34;, &#34;state&#34;: &#34;off&#34; if lights[&#39;kitchen&#39;][&#39;state&#39;] == &#39;on&#39; else &#34;on&#34;}}
+            }
+        },
+        {
+            &#34;id&#34;: &#34;light-row-bed&#34;,
+            &#34;component&#34;: &#34;Row&#34;,
+            &#34;properties&#34;: {&#34;alignment&#34;: &#34;space-between&#34;},
+            &#34;children&#34;: [&#34;light-text-bed&#34;, &#34;light-btn-bed&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;light-text-bed&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;{lights[&#39;bedroom&#39;][&#39;name&#39;]}: {lights[&#39;bedroom&#39;][&#39;state&#39;].upper()} ({lights[&#39;bedroom&#39;][&#39;brightness&#39;]}%)&#34;, &#34;variant&#34;: &#34;body&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;light-btn-bed&#34;,
+            &#34;component&#34;: &#34;Button&#34;,
+            &#34;properties&#34;: {
+                &#34;label&#34;: &#34;Turn OFF&#34; if lights[&#39;bedroom&#39;][&#39;state&#39;] == &#39;on&#39; else &#34;Turn ON&#34;,
+                &#34;variant&#34;: &#34;filled&#34; if lights[&#39;bedroom&#39;][&#39;state&#39;] == &#39;on&#39; else &#34;outlined&#34;,
+                &#34;action&#34;: {&#34;name&#34;: &#34;set_light&#34;, &#34;parameters&#34;: {&#34;room&#34;: &#34;bedroom&#34;, &#34;state&#34;: &#34;off&#34; if lights[&#39;bedroom&#39;][&#39;state&#39;] == &#39;on&#39; else &#34;on&#34;}}
+            }
+        },
+
+        # Air Quality Card
+        {
+            &#34;id&#34;: &#34;air-card&#34;,
+            &#34;component&#34;: &#34;Card&#34;,
+            &#34;children&#34;: [&#34;air-title&#34;, &#34;air-info&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;air-title&#34;,
+            &#34;component&#34;: &#34;Row&#34;,
+            &#34;properties&#34;: {&#34;alignment&#34;: &#34;space-between&#34;},
+            &#34;children&#34;: [&#34;air-text-title&#34;, &#34;air-badge&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;air-text-title&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;🍃 Air Quality ({air[&#39;location&#39;]})&#34;, &#34;variant&#34;: &#34;subtitle&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;air-badge&#34;,
+            &#34;component&#34;: &#34;StatusBadge&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;Status: {air[&#39;status&#39;]}&#34;, &#34;status&#34;: &#34;active&#34; if air[&#39;status&#39;] == &#34;Good&#34; else &#34;warning&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;air-info&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;CO2: {air[&#39;co2&#39;]} ppm  |  Humidity: {air[&#39;humidity&#39;]}%  |  Battery: {air[&#39;battery&#39;]}%&#34;, &#34;variant&#34;: &#34;body&#34;}
+        },
+
+        # Security Card
+        {
+            &#34;id&#34;: &#34;security-card&#34;,
+            &#34;component&#34;: &#34;Card&#34;,
+            &#34;children&#34;: [&#34;sec-title&#34;, &#34;sec-front&#34;, &#34;sec-garage&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;sec-title&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: &#34;🔒 Home Security &amp; Access&#34;, &#34;variant&#34;: &#34;subtitle&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;sec-front&#34;,
+            &#34;component&#34;: &#34;Row&#34;,
+            &#34;properties&#34;: {&#34;alignment&#34;: &#34;space-between&#34;},
+            &#34;children&#34;: [&#34;sec-front-text&#34;, &#34;sec-front-btn&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;sec-front-text&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;{sec[&#39;front_door&#39;][&#39;name&#39;]}: {sec[&#39;front_door&#39;][&#39;state&#39;].upper()} (Battery: {sec[&#39;front_door&#39;][&#39;battery&#39;]}%)&#34;, &#34;variant&#34;: &#34;body&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;sec-front-btn&#34;,
+            &#34;component&#34;: &#34;Button&#34;,
+            &#34;properties&#34;: {
+                &#34;label&#34;: &#34;Unlock&#34; if sec[&#39;front_door&#39;][&#39;state&#39;] == &#39;locked&#39; else &#34;Lock&#34;,
+                &#34;variant&#34;: &#34;tonal&#34;,
+                &#34;action&#34;: {&#34;name&#34;: &#34;set_door_lock&#34;, &#34;parameters&#34;: {&#34;device&#34;: &#34;front_door&#34;, &#34;state&#34;: &#34;unlocked&#34; if sec[&#39;front_door&#39;][&#39;state&#39;] == &#39;locked&#39; else &#34;locked&#34;}}
+            }
+        },
+        {
+            &#34;id&#34;: &#34;sec-garage&#34;,
+            &#34;component&#34;: &#34;Row&#34;,
+            &#34;properties&#34;: {&#34;alignment&#34;: &#34;space-between&#34;},
+            &#34;children&#34;: [&#34;sec-garage-text&#34;, &#34;sec-garage-btn&#34;]
+        },
+        {
+            &#34;id&#34;: &#34;sec-garage-text&#34;,
+            &#34;component&#34;: &#34;Text&#34;,
+            &#34;properties&#34;: {&#34;text&#34;: f&#34;{sec[&#39;garage&#39;][&#39;name&#39;]}: {sec[&#39;garage&#39;][&#39;state&#39;].upper()} (Battery: {sec[&#39;garage&#39;][&#39;battery&#39;]}%)&#34;, &#34;variant&#34;: &#34;body&#34;}
+        },
+        {
+            &#34;id&#34;: &#34;sec-garage-btn&#34;,
+            &#34;component&#34;: &#34;Button&#34;,
+            &#34;properties&#34;: {
+                &#34;label&#34;: &#34;Open&#34; if sec[&#39;garage&#39;][&#39;state&#39;] == &#39;closed&#39; else &#34;Close&#34;,
+                &#34;variant&#34;: &#34;tonal&#34;,
+                &#34;action&#34;: {&#34;name&#34;: &#34;set_door_lock&#34;, &#34;parameters&#34;: {&#34;device&#34;: &#34;garage&#34;, &#34;state&#34;: &#34;open&#34; if sec[&#39;garage&#39;][&#39;state&#39;] == &#39;closed&#39; else &#34;closed&#34;}}
+            }
+        },
+    ]
+
+    return {
+        &#34;surfaceId&#34;: surface_id,
+        &#34;rootComponentId&#34;: &#34;root-container&#34;,
+        &#34;components&#34;: components,
+    }
+
+def execute_smart_home_action(name: str, parameters: Dict[str, Any]) -&gt; str:
+    if name == &#34;set_thermostat&#34;:
+        temp = int(parameters.get(&#34;temperature&#34;, 72))
+        mode = parameters.get(&#34;mode&#34;, &#34;heat&#34;)
+        SMART_HOME_STATE[&#34;thermostat&#34;][&#34;target_temperature&#34;] = temp
+        SMART_HOME_STATE[&#34;thermostat&#34;][&#34;mode&#34;] = mode
+        return f&#34;Thermostat updated to {temp}°F ({mode} mode).&#34;
+    elif name == &#34;set_light&#34;:
+        room = parameters.get(&#34;room&#34;, &#34;living_room&#34;)
+        state = parameters.get(&#34;state&#34;, &#34;on&#34;)
+        if room in SMART_HOME_STATE[&#34;lights&#34;]:
+            SMART_HOME_STATE[&#34;lights&#34;][room][&#34;state&#34;] = state
+            SMART_HOME_STATE[&#34;lights&#34;][room][&#34;brightness&#34;] = 100 if state == &#34;on&#34; else 0
+            return f&#34;{SMART_HOME_STATE[&#39;lights&#39;][room][&#39;name&#39;]} turned {state}.&#34;
+    elif name == &#34;set_door_lock&#34;:
+        dev = parameters.get(&#34;device&#34;, &#34;front_door&#34;)
+        state = parameters.get(&#34;state&#34;, &#34;locked&#34;)
+        if dev in SMART_HOME_STATE[&#34;security&#34;]:
+            SMART_HOME_STATE[&#34;security&#34;][dev][&#34;state&#34;] = state
+            return f&#34;{SMART_HOME_STATE[&#39;security&#39;][dev][&#39;name&#39;]} is now {state}.&#34;
+    return &#34;Action processed.&#34;
+
+def get_device_status() -&gt; dict:
+    &#34;&#34;&#34;Retrieves current status of all home automation devices.&#34;&#34;&#34;
+    return SMART_HOME_STATE
+
+PROJECT_ID = os.environ.get(&#34;GOOGLE_CLOUD_PROJECT&#34;) or os.environ.get(&#34;GCP_PROJECT&#34;)
+LOCATION = os.environ.get(&#34;GOOGLE_CLOUD_REGION&#34;, &#34;us-central1&#34;)
+
+client = genai.Client(
+    vertexai=True,
+    project=PROJECT_ID,
+    location=LOCATION,
+)
+
+A2UI_SYSTEM_INSTRUCTION = &#34;&#34;&#34;You are an intelligent Smart Home Voice &amp; Chat Assistant equipped with A2UI (Agent-to-User Interface) generative UI capabilities.
+You help users monitor and manage their IoT devices: thermostat, smart lights, indoor air quality, and security locks.
+
+You have access to the `get_device_status` tool to check real-time device values.
+
+IMPORTANT DECISION RULE FOR OUTPUT FORMAT:
+You must decide between TWO response formats based on what the user asks:
+
+1. TEXT-ONLY RESPONSE:
+   When the user asks conversational questions, general knowledge, explanations, recommendations, or troubleshooting (e.g., &#34;What humidity is ideal for sleep?&#34;, &#34;How can I conserve energy with smart lights?&#34;, &#34;How does a heat pump work?&#34;):
+   -&gt; Respond ONLY in friendly, clear markdown text. Do NOT emit A2UI components or code blocks for informational questions.
+
+2. A2UI GENERATIVE UI RESPONSE:
+   When the user asks to see device status, inspect devices, show a dashboard, or adjust smart home controls (e.g., &#34;Show me my smart home status&#34;, &#34;Show the living room&#34;, &#34;List my devices&#34;, &#34;Thermostat settings&#34;, &#34;Turn off living room light&#34;):
+   -&gt; First provide a short friendly text summary (1-2 sentences).
+   -&gt; THEN append an A2UI declarative JSON block enclosed strictly in ```a2ui ... ``` containing the A2UI surface definition.
+
+A2UI HOME AUTOMATION COMPONENT CATALOG:
+- &#34;Column&#34;: Vertically stacks child components. Children: array of component IDs.
+- &#34;Row&#34;: Horizontally stacks child components. Properties: {&#34;alignment&#34;: &#34;start&#34;|&#34;space-between&#34;|&#34;center&#34;}. Children: array of IDs.
+- &#34;Card&#34;: Visual container with card styling and padding. Children: array of component IDs.
+- &#34;Text&#34;: Displays text. Properties: {&#34;text&#34;: string, &#34;variant&#34;: &#34;title&#34;|&#34;subtitle&#34;|&#34;body&#34;|&#34;caption&#34;}.
+- &#34;StatusBadge&#34;: Visual pill badge. Properties: {&#34;text&#34;: string, &#34;status&#34;: &#34;normal&#34;|&#34;active&#34;|&#34;warning&#34;|&#34;offline&#34;}.
+- &#34;Button&#34;: Clickable button that emits an action. Properties: {
+    &#34;label&#34;: string,
+    &#34;variant&#34;: &#34;filled&#34;|&#34;outlined&#34;|&#34;tonal&#34;,
+    &#34;action&#34;: {&#34;name&#34;: &#34;set_thermostat&#34;|&#34;set_light&#34;|&#34;set_door_lock&#34;, &#34;parameters&#34;: { ... }}
+  }
+Always ensure valid JSON inside the a2ui code block.
+&#34;&#34;&#34;
+
+def parse_a2ui_response(raw_text: str) -&gt; Tuple[str, Optional[Dict[str, Any]]]:
+    &#34;&#34;&#34;Extracts text and optional A2UI declarative surface JSON from the model&#39;s response.&#34;&#34;&#34;
+    a2ui_match = re.search(r&#34;```(?:a2ui|json)\s*\n([\s\S]*?)\n```&#34;, raw_text)
+    if a2ui_match:
+        json_content = a2ui_match.group(1).strip()
+        text_before = raw_text[:a2ui_match.start()].strip()
+        text_after = raw_text[a2ui_match.end():].strip()
+        cleaned_text = f&#34;{text_before} {text_after}&#34;.strip()
+
+        try:
+            surface_data = json.loads(json_content)
+            if &#34;components&#34; in surface_data or &#34;surfaceId&#34; in surface_data:
+                return cleaned_text, surface_data
+        except json.JSONDecodeError:
+            pass
+
+    try:
+        data = json.loads(raw_text.strip())
+        if isinstance(data, dict):
+            if &#34;components&#34; in data:
+                return &#34;Here is your smart home status:&#34;, data
+            if &#34;a2ui&#34; in data and isinstance(data[&#34;a2ui&#34;], dict):
+                return data.get(&#34;text&#34;, &#34;&#34;), data[&#34;a2ui&#34;]
+    except json.JSONDecodeError:
+        pass
+
+    return raw_text.strip(), None
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class ChatRequest(BaseModel):
+    message: str
+    history: Optional[List[ChatMessage]] = None
+
+class ChatResponse(BaseModel):
+    text: str
+    a2ui: Optional[Dict[str, Any]] = None
+
+class ActionRequest(BaseModel):
+    action: str
+    parameters: Dict[str, Any]
+
+class ActionResponse(BaseModel):
+    message: str
+    a2ui: Dict[str, Any]
+
+@app.post(&#34;/api/chat&#34;, response_model=ChatResponse)
+async def chat_endpoint(req: ChatRequest):
+    try:
+        contents = []
+        if req.history:
+            for msg in req.history:
+                contents.append(types.Content(
+                    role=msg.role,
+                    parts=[types.Part.from_text(text=msg.content)]
+                ))
+        contents.append(types.Content(
+            role=&#34;user&#34;,
+            parts=[types.Part.from_text(text=req.message)]
+        ))
+
+        config = types.GenerateContentConfig(
+            system_instruction=A2UI_SYSTEM_INSTRUCTION,
+            temperature=0.3,
+            tools=[get_device_status],
+        )
+
+        response = client.models.generate_content(
+            model=&#34;gemini-3.8-flash&#34;,
+            contents=contents,
+            config=config,
+        )
+
+        raw_output = response.text or &#34;&#34;
+        text_part, a2ui_surface = parse_a2ui_response(raw_output)
+
+        # Fallback to current live dashboard if user asked for controls
+        keywords = [&#34;device&#34;, &#34;status&#34;, &#34;dashboard&#34;, &#34;thermostat&#34;, &#34;lights&#34;, &#34;turn&#34;, &#34;set&#34;, &#34;home&#34;]
+        if not a2ui_surface and any(k in req.message.lower() for k in keywords) and &#34;what is&#34; not in req.message.lower() and &#34;how&#34; not in req.message.lower():
+            a2ui_surface = build_a2ui_dashboard_surface()
+
+        return ChatResponse(text=text_part or &#34;Command executed.&#34;, a2ui=a2ui_surface)
+    except Exception as e:
+        print(f&#34;Error calling Gemini: {e}&#34;)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post(&#34;/api/action&#34;, response_model=ActionResponse)
+async def action_endpoint(req: ActionRequest):
+    msg = execute_smart_home_action(req.action, req.parameters)
+    updated_surface = build_a2ui_dashboard_surface()
+    return ActionResponse(message=msg, a2ui=updated_surface)
+
+@app.get(&#34;/api/devices&#34;)
+async def get_devices():
+    return SMART_HOME_STATE
+
+static_dir = os.path.join(os.path.dirname(__file__), &#34;static&#34;)
+if os.path.exists(static_dir):
+    app.mount(&#34;/static&#34;, StaticFiles(directory=static_dir), name=&#34;static&#34;)
+
+@app.get(&#34;/&#34;)
+async def root():
+    index_file = os.path.join(static_dir, &#34;index.html&#34;)
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+    return {&#34;message&#34;: &#34;A2UI Smart Home API running.&#34;}
+
+if __name__ == &#34;__main__&#34;:
+    import uvicorn
+    port = int(os.environ.get(&#34;PORT&#34;, 8080))
+    uvicorn.run(&#34;main:app&#34;, host=&#34;0.0.0.0&#34;, port=port, reload=True)
+EOF
+</code></pre></div>
+    </div>
+
+  </div>
+
+  <script>
+    (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+    })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+    ga('create', 'UA-49880327-14', 'auto');
+
+    (function() {
+      var gaCodelab = '';
+      if (gaCodelab) {
+        ga('create', gaCodelab, 'auto', {name: 'codelab'});
+      }
+
+      var gaView;
+      var parts = location.search.substring(1).split('&');
+      for (var i = 0; i < parts.length; i++) {
+        var param = parts[i].split('=');
+        if (param[0] === 'viewga') {
+          gaView = param[1];
+          break;
+        }
+      }
+      if (gaView && gaView !== gaCodelab) {
+        ga('create', gaView, 'auto', {name: 'view'});
+      }
+    })();
+  </script>
+  <script src=".scripts/codelab.js" async></script>
+</body>
+</html>
